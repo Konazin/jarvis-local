@@ -1,0 +1,26 @@
+[assistant]
+name = "Yuki"
+language = "pt-BR"
+
+[llm]
+base_url = "http://127.0.0.1:8080/v1"
+model = "Qwen/Qwen3-1.7B-GGUF:Q8_0"
+context_size = 4096
+thinking = false
+timeout_seconds = 60
+
+[tts]
+engine = "kokoro"
+language = "pt-BR"
+lang_code = "p"
+voice = "pf_dora"
+speed = 1.0
+mode = "balanced"
+keep_alive_seconds = 60
+python = ".venv-kokoro/bin/python"
+
+[performance]
+memory_pressure_threshold = 0.85
+
+[audio]
+output_device = "default"
