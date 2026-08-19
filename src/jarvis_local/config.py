@@ -1,6 +1,6 @@
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-import tomllib
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class LLMConfig:
     context_size: int = 4096
     thinking: bool = False
     timeout_seconds: float = 60.0
+    max_tokens: int = 256
 
 
 @dataclass(frozen=True)
@@ -67,12 +68,14 @@ def load_config(path: str | Path | None = None) -> Config:
         except tomllib.TOMLDecodeError as exc:
             raise ValueError(f"configuração TOML inválida: {exc}") from exc
     config = Config(
-        AssistantConfig(**_section(data, "assistant")), LLMConfig(**_section(data, "llm")),
-        TTSConfig(**_section(data, "tts")), PerformanceConfig(**_section(data, "performance")),
+        AssistantConfig(**_section(data, "assistant")),
+        LLMConfig(**_section(data, "llm")),
+        TTSConfig(**_section(data, "tts")),
+        PerformanceConfig(**_section(data, "performance")),
         AudioConfig(**_section(data, "audio")),
     )
-    if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0:
-        raise ValueError("context_size e timeout_seconds devem ser positivos")
+    if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0 or config.llm.max_tokens < 1:
+        raise ValueError("context_size, timeout_seconds e max_tokens devem ser positivos")
     if not 0 < config.performance.memory_pressure_threshold <= 1:
         raise ValueError("memory_pressure_threshold deve estar entre 0 e 1")
     if config.tts.speed <= 0 or config.tts.keep_alive_seconds < 0:

@@ -10,8 +10,10 @@ class State(str, Enum):
 
 
 _TRANSITIONS = {
-    State.IDLE: {State.THINKING}, State.THINKING: {State.EXECUTING, State.SPEAKING, State.ERROR},
-    State.EXECUTING: {State.THINKING, State.ERROR}, State.SPEAKING: {State.IDLE, State.ERROR},
+    State.IDLE: {State.THINKING},
+    State.THINKING: {State.EXECUTING, State.SPEAKING, State.ERROR},
+    State.EXECUTING: {State.THINKING, State.ERROR},
+    State.SPEAKING: {State.IDLE, State.ERROR},
     State.ERROR: {State.IDLE},
 }
 

@@ -1,8 +1,9 @@
 import logging
 
-from .state import State, StateMachine
 from jarvis_local.llm.client import LLMClient
 from jarvis_local.tools.registry import ToolRegistry
+
+from .state import State, StateMachine
 
 log = logging.getLogger(__name__)
 
@@ -11,6 +12,12 @@ class Assistant:
     def __init__(self, llm: LLMClient, tools: ToolRegistry, tts: object | None = None) -> None:
         self.llm, self.tools, self.tts = llm, tools, tts
         self.state = StateMachine()
+
+    def tool_start(self, _name: str) -> None:
+        self.state.transition(State.EXECUTING)
+
+    def tool_finish(self, _name: str) -> None:
+        self.state.transition(State.THINKING)
 
     def ask(self, text: str) -> str:
         self.state.transition(State.THINKING)
@@ -27,5 +34,6 @@ class Assistant:
                 self.state.transition(State.IDLE)
             return answer
         except Exception:
-            self.state.transition(State.ERROR); self.state.transition(State.IDLE)
+            self.state.transition(State.ERROR)
+            self.state.transition(State.IDLE)
             raise

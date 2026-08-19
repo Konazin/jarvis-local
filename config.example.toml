@@ -8,6 +8,7 @@ model = "Qwen/Qwen3-1.7B-GGUF:Q8_0"
 context_size = 4096
 thinking = false
 timeout_seconds = 60
+max_tokens = 256
 
 [tts]
 engine = "kokoro"

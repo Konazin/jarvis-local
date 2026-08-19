@@ -1,14 +1,15 @@
 import logging
-import multiprocessing as mp
 import os
-import sys
+import pickle
+import socket
+import subprocess
+import tempfile
 import threading
 import time
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import psutil
 
 log = logging.getLogger(__name__)
@@ -21,47 +22,60 @@ class TTSState(StrEnum):
     SPEAKING = "SPEAKING"
 
 
-def _worker(connection: Any, python_path: str, lang_code: str, voice: str, speed: float) -> None:
-    site_packages = Path(python_path).parent.parent / "lib" / "python3.12" / "site-packages"
-    if site_packages.exists():
-        sys.path.insert(0, str(site_packages))
-    from kokoro import KPipeline
-
-    pipeline = KPipeline(lang_code=lang_code)
-    connection.send(("ready", None))
-    while True:
-        text = connection.recv()
-        if text is None:
-            return
-        chunks = [audio.numpy() for _, _, audio in pipeline(text, voice=voice, speed=speed)]
-        connection.send(("audio", np.concatenate(chunks)))
-
-
 class TTSManager:
-    def __init__(self, config: Any, audio_device: str = "default", threshold: float = 0.85) -> None:
+    def __init__(self, config: Any, audio_device: str = "default", threshold: float = 0.85, popen=None) -> None:
         self.config, self.audio_device, self.threshold = config, audio_device, threshold
         self.state = TTSState.COLD
-        self._process = self._parent = None
+        self._process = self._socket = None
+        self._socket_path = None
         self._lock = threading.Lock()
+        self._timer = None
         self._last_used = time.monotonic()
         self.muted = False
+        self._popen = popen or subprocess.Popen
 
     def ensure_loaded(self) -> None:
         with self._lock:
             if self.state in (TTSState.LOADING, TTSState.READY):
                 return
             self.state = TTSState.LOADING
-            context = mp.get_context("spawn")
-            self._parent, child = context.Pipe()
+            self._socket_path = tempfile.mktemp(prefix="yuki-tts-", dir="/tmp")
             python = Path(self.config.python)
-            if not python.is_absolute():
-                python = Path.cwd() / python
-            self._process = context.Process(target=_worker, args=(child, str(python), self.config.lang_code, self.config.voice, self.config.speed), daemon=True)
-            self._process.start()
-            if not self._parent.poll(60) or self._parent.recv()[0] != "ready":
-                self.state = TTSState.COLD
-                raise RuntimeError("worker Kokoro não iniciou")
+            python = python if python.is_absolute() else Path.cwd() / python
+            worker = Path(__file__).with_name("worker.py")
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["PYTHONPATH"] = str(worker.parents[2]) + os.pathsep + env.get("PYTHONPATH", "")
+            self._process = self._popen(
+                [
+                    str(python),
+                    str(worker),
+                    self._socket_path,
+                    self.config.lang_code,
+                    self.config.voice,
+                    str(self.config.speed),
+                ],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if self._process.poll() is not None:
+                    self._fail_load("worker Kokoro encerrou ao iniciar")
+                try:
+                    self._socket.connect(self._socket_path)
+                    break
+                except FileNotFoundError:
+                    time.sleep(0.02)
+            else:
+                self._fail_load("timeout ao conectar ao worker Kokoro")
+            status = self._request({"command": "LOAD"})
+            if status.get("status") != "ready":
+                self._fail_load(status.get("error", "Kokoro não iniciou"))
             self.state = TTSState.READY
+            self._last_used = time.monotonic()
             self._arm_ttl()
             log.info("TTS ready")
 
@@ -70,18 +84,18 @@ class TTSManager:
             return
         self.ensure_loaded()
         with self._lock:
-            if self.state != TTSState.READY or self._parent is None:
+            if self.state != TTSState.READY:
                 raise RuntimeError("TTS não está pronto")
             self.state = TTSState.SPEAKING
             try:
-                self._parent.send(text)
-                status, audio = self._parent.recv()
-                if status != "audio":
-                    raise RuntimeError("worker Kokoro não retornou áudio")
-                device = None if self.audio_device == "default" else self.audio_device
+                result = self._request({"command": "SPEAK", "text": text})
+                if result.get("status") != "audio":
+                    raise RuntimeError(result.get("error", "worker Kokoro não retornou áudio"))
                 import sounddevice as sd
 
-                sd.play(audio, 24000, device=device); sd.wait()
+                device = None if self.audio_device == "default" else self.audio_device
+                sd.play(result["audio"], 24000, device=device)
+                sd.wait()
                 self._last_used = time.monotonic()
                 self._arm_ttl()
             finally:
@@ -89,9 +103,9 @@ class TTSManager:
 
     def unload_if_idle(self) -> None:
         with self._lock:
-            idle = time.monotonic() - self._last_used >= self.config.keep_alive_seconds
-            pressured = psutil.virtual_memory().percent / 100 > self.threshold
-            if self.state != TTSState.READY or not idle or (self.config.mode == "resident" and not pressured):
+            if self.state != TTSState.READY or time.monotonic() - self._last_used < self.config.keep_alive_seconds:
+                return
+            if self.config.mode == "resident" and psutil.virtual_memory().percent / 100 <= self.threshold:
                 return
             self._stop_locked()
             log.info("TTS worker unloaded")
@@ -102,19 +116,53 @@ class TTSManager:
     def _arm_ttl(self) -> None:
         if self.config.mode == "resident" or self.config.keep_alive_seconds == 0:
             return
-        timer = threading.Timer(self.config.keep_alive_seconds, self.unload_if_idle)
-        timer.daemon = True
-        timer.start()
+        if self._timer:
+            self._timer.cancel()
+        self._timer = threading.Timer(self.config.keep_alive_seconds, self.unload_if_idle)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self._socket or self._process.poll() is not None:
+            raise RuntimeError("worker Kokoro está offline")
+        data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+        self._socket.sendall(len(data).to_bytes(8, "big") + data)
+        size = int.from_bytes(self._read_exact(8), "big")
+        return pickle.loads(self._read_exact(size))
+
+    def _read_exact(self, size: int) -> bytes:
+        result = b""
+        while len(result) < size:
+            chunk = self._socket.recv(size - len(result))
+            if not chunk:
+                raise RuntimeError("worker Kokoro morreu")
+            result += chunk
+        return result
+
+    def _fail_load(self, message: str) -> None:
+        self._stop_locked()
+        raise RuntimeError(message)
 
     def _stop_locked(self) -> None:
-        if self._parent:
-            self._parent.send(None); self._parent.close()
+        if self._timer:
+            self._timer.cancel()
+            self._timer = None
+        if self._socket:
+            try:
+                self._request({"command": "STOP"})
+            except Exception:
+                pass
+            self._socket.close()
         if self._process:
-            self._process.join(timeout=2)
-        self._process = self._parent = None
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait()
+        self._socket = self._process = None
         self.state = TTSState.COLD
 
     def close(self) -> None:
         with self._lock:
-            if self._process:
-                self._stop_locked()
+            self._stop_locked()

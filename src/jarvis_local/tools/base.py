@@ -18,4 +18,7 @@ class Tool:
     execute: Callable[..., dict[str, Any]]
 
     def schema(self) -> dict[str, Any]:
-        return {"type": "function", "function": {"name": self.name, "description": self.description, "parameters": self.parameters}}
+        return {
+            "type": "function",
+            "function": {"name": self.name, "description": self.description, "parameters": self.parameters},
+        }

@@ -1,10 +1,33 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
+*.py[cod]
 build/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+.venv-*/
+venv/
+
+# Local configuration and caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+.env.*
+config.toml
+
+# Models, audio and logs
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.gguf
+*.safetensors
+*.pth
+*.pt
+logs/
+*.log
+.DS_Store
