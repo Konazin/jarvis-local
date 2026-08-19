@@ -15,3 +15,10 @@ def test_registry_schema_and_execution() -> None:
 def test_unknown_tool_is_rejected() -> None:
     with pytest.raises(KeyError):
         ToolRegistry().execute("nope", {})
+
+
+def test_duplicate_tool_is_rejected() -> None:
+    registry = ToolRegistry()
+    registry.register(SYSTEM_STATUS_TOOL)
+    with pytest.raises(ValueError):
+        registry.register(SYSTEM_STATUS_TOOL)

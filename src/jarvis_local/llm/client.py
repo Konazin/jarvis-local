@@ -59,15 +59,13 @@ class LLMClient:
             for call in calls:
                 name = call.get("function", {}).get("name")
                 try:
-                    if self.on_tool_start:
-                        self.on_tool_start(name)
+                    self._callback(self.on_tool_start, name)
                     arguments = json.loads(call.get("function", {}).get("arguments", "{}"))
                     result = registry.execute(name, arguments)
                 except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                     result = {"error": str(exc)}
                 finally:
-                    if self.on_tool_finish:
-                        self.on_tool_finish(name)
+                    self._callback(self.on_tool_finish, name)
                 messages.append(
                     {
                         "role": "tool",
@@ -76,6 +74,14 @@ class LLMClient:
                     }
                 )
         raise LLMError("limite de chamadas de tools excedido")
+
+    @staticmethod
+    def _callback(callback, name: str) -> None:
+        if callback:
+            try:
+                callback(name)
+            except Exception:
+                log.exception("tool callback failed: %s", name)
 
     def close(self) -> None:
         self.client.close()

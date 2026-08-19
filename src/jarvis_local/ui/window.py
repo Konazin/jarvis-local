@@ -23,9 +23,13 @@ class AskWorker(QObject):
 
 
 class Window(QWidget):
+    state_changed = Signal(str)
+
     def __init__(self, assistant: Assistant) -> None:
         super().__init__()
         self.assistant = assistant
+        self.assistant.on_state_change = self.state_changed.emit
+        self.state_changed.connect(self.status.setText)
         self.setWindowTitle("Yuki")
         self.resize(480, 360)
         self.status = QLabel("IDLE")
@@ -65,7 +69,6 @@ class Window(QWidget):
 
     def done(self, answer: str) -> None:
         self.history.addItem(f"Yuki: {answer}")
-        self.status.setText("IDLE")
         self.input.setEnabled(True)
 
     def failed(self, error: str) -> None:

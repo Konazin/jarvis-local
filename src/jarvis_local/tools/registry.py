@@ -11,6 +11,8 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
+        if tool.name in self._tools:
+            raise ValueError(f"tool já registrada: {tool.name}")
         self._tools[tool.name] = tool
 
     def schemas(self) -> list[dict[str, Any]]:
