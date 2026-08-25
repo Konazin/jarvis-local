@@ -1,18 +1,21 @@
-"""Lifecycle management for an external ``llama-server`` process."""
+"""Lifecycle and compatibility management for an external ``llama-server``."""
 
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import shutil
 import subprocess
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlsplit
+from types import MappingProxyType
+from typing import Any, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -27,29 +30,58 @@ class LLMRuntimeState(StrEnum):
 
 
 class LLMRuntimeError(RuntimeError):
-    """Raised when llama-server is unavailable or cannot be managed."""
+    """Raised when llama-server is unavailable or incompatible."""
+
+
+@dataclass(frozen=True)
+class RuntimeCapabilities:
+    supports_tool_calls: bool | None
+    supports_parallel_tool_calls: bool | None
+    supports_reasoning: bool | None
+    supports_reasoning_effort: bool | None
+    context_size: int | None
+    model_path: str | None
+    raw_chat_template_caps: Mapping[str, bool]
+
+
+@dataclass(frozen=True)
+class LLMRuntimeSnapshot:
+    state: LLMRuntimeState
+    mode: str
+    owns_process: bool
+    pid: int | None
+    model: str
+    base_url: str
+    capabilities: RuntimeCapabilities | None
 
 
 class LLMRuntimeManager:
-    """Ensure a llama-server configured for the LLM client is available.
+    """Ensure the configured llama-server is healthy and API-compatible.
 
-    The manager deliberately only owns processes it starts itself. A healthy
-    server already listening at ``base_url`` is always left untouched.
+    Only a process started by this manager is owned and eligible for shutdown.
+    A healthy external process is probed but never terminated by Yuki.
     """
 
     _HEALTH_TIMEOUT_SECONDS = 2.0
     _POLL_INTERVAL_SECONDS = 0.25
+    _LOG_JOIN_TIMEOUT_SECONDS = 1.0
 
     def __init__(self, config: Any, client: httpx.Client | None = None) -> None:
         self.config = config
-        self._host, self._port, self._health_url = self._parse_base_url(config.base_url)
+        self._host, self._port, self._server_root = self._parse_base_url(config.base_url)
+        self._health_url = f"{self._server_root}/health"
+        self._props_url = f"{self._server_root}/props"
         self._validate_config()
         self._client = client or httpx.Client(timeout=self._HEALTH_TIMEOUT_SECONDS)
+        self._owns_client = client is None
         self._lock = threading.RLock()
+        self._closed = False
         self.state = LLMRuntimeState.STOPPED
         self.process: subprocess.Popen[str] | None = None
         self.owns_process = False
+        self.capabilities: RuntimeCapabilities | None = None
         self.log_tail: deque[str] = deque(maxlen=100)
+        self._log_thread: threading.Thread | None = None
 
     @staticmethod
     def _parse_base_url(base_url: str) -> tuple[str, int, str]:
@@ -62,7 +94,7 @@ class LLMRuntimeManager:
             raise LLMRuntimeError(f"porta invalida em base_url: {base_url!r}") from exc
         host = parsed.hostname
         netloc = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
-        return host, port, f"{parsed.scheme}://{netloc}/health"
+        return host, port, urlunsplit((parsed.scheme, netloc, "", "", ""))
 
     @staticmethod
     def _is_loopback(host: str) -> bool:
@@ -93,8 +125,6 @@ class LLMRuntimeManager:
         if self.config.model_source == "hf":
             command.extend(["-hf", self.config.model])
         elif self.config.model_source == "local":
-            if not self.config.model_path:
-                raise LLMRuntimeError("model_path e obrigatorio quando model_source e 'local'")
             command.extend(["-m", self.config.model_path])
         else:
             raise LLMRuntimeError(f"model_source invalido: {self.config.model_source!r}")
@@ -119,32 +149,35 @@ class LLMRuntimeManager:
         return command
 
     def ensure_ready(self) -> None:
-        """Block until the configured server answers ``GET /health`` with 200."""
+        """Block until health and the required chat-template capabilities pass."""
         with self._lock:
+            if self._closed:
+                raise LLMRuntimeError("runtime LLM ja foi fechado")
             self._forget_dead_owned_process()
             status = self._health_status()
             if status == 200:
+                if self.state is LLMRuntimeState.READY and self.capabilities is not None:
+                    return
                 if not self.owns_process:
                     log.info("llama-server already running")
-                self.state = LLMRuntimeState.READY
+                self._become_ready()
                 return
 
+            self._invalidate_capabilities()
             if self.config.runtime_mode == "external":
+                self.state = LLMRuntimeState.FAILED
                 log.info("LLM runtime external check")
                 raise self._external_health_error(status)
 
             if status not in {None, 503}:
                 self.state = LLMRuntimeState.FAILED
                 raise LLMRuntimeError(f"llama-server health check failed with HTTP {status}")
-
             if status == 503 or self._has_running_owned_process():
-                # A process already owns the port and is loading. Do not try to
-                # start a second one, even if it was launched outside Yuki.
                 self.state = LLMRuntimeState.STARTING
-                return self._wait_for_ready()
-
+                self._wait_for_ready()
+                return
             self._start_process()
-            return self._wait_for_ready()
+            self._wait_for_ready()
 
     def _health_status(self) -> int | None:
         try:
@@ -160,6 +193,78 @@ class LLMRuntimeManager:
             return LLMRuntimeError("servidor LLM externo ainda esta carregando o modelo")
         return LLMRuntimeError(f"health check do servidor LLM externo falhou com HTTP {status}")
 
+    def _become_ready(self) -> None:
+        self.state = LLMRuntimeState.READY
+        try:
+            self._probe_capabilities()
+        except LLMRuntimeError:
+            log.error("runtime incompatible")
+            self._invalidate_capabilities()
+            if self.owns_process:
+                self._cleanup_after_failure()
+            else:
+                self.state = LLMRuntimeState.FAILED
+            raise
+        log.info("runtime compatible")
+        log.info("llama-server ready")
+
+    def _probe_capabilities(self) -> None:
+        if self.capabilities is not None:
+            return
+        log.info("llama-server capability probe")
+        try:
+            response = self._client.get(self._props_url, params={"model": self.config.model})
+        except httpx.HTTPError as exc:
+            raise LLMRuntimeError(f"endpoint de capabilities /props indisponivel: {exc}") from exc
+        if response.status_code != 200:
+            raise LLMRuntimeError(f"capability probe /props falhou com HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise LLMRuntimeError("capability probe /props retornou JSON invalido") from exc
+        self.capabilities = self._extract_capabilities(payload)
+        tool_support = self.capabilities.supports_tool_calls
+        log.info("llama-server tool support: %s", tool_support)
+        if self.config.require_tool_support and tool_support is False:
+            raise LLMRuntimeError("llama-server esta saudavel, mas o chat template nao anuncia suporte a tool calls")
+        if self.capabilities.context_size is not None and self.capabilities.context_size < self.config.context_size:
+            log.warning(
+                "llama-server context is %s but Yuki expects %s",
+                self.capabilities.context_size,
+                self.config.context_size,
+            )
+
+    @staticmethod
+    def _extract_capabilities(payload: Any) -> RuntimeCapabilities:
+        if not isinstance(payload, dict):
+            raise LLMRuntimeError("capability probe /props retornou estrutura incompativel")
+        caps = payload.get("chat_template_caps")
+        if not isinstance(caps, dict):
+            raise LLMRuntimeError("capability probe /props sem chat_template_caps compativel")
+        raw_caps: dict[str, bool] = {}
+        for key, value in caps.items():
+            if not isinstance(key, str) or not isinstance(value, bool):
+                raise LLMRuntimeError("capability probe /props contem chat_template_caps incompativel")
+            raw_caps[key] = value
+        settings = payload.get("default_generation_settings", {})
+        if not isinstance(settings, dict):
+            raise LLMRuntimeError("capability probe /props contem generation settings incompativel")
+        context_size = settings.get("n_ctx")
+        if context_size is not None and (not isinstance(context_size, int) or isinstance(context_size, bool)):
+            raise LLMRuntimeError("capability probe /props contem n_ctx incompativel")
+        model_path = payload.get("model_path")
+        if model_path is not None and not isinstance(model_path, str):
+            raise LLMRuntimeError("capability probe /props contem model_path incompativel")
+        return RuntimeCapabilities(
+            supports_tool_calls=caps.get("supports_tool_calls"),
+            supports_parallel_tool_calls=caps.get("supports_parallel_tool_calls"),
+            supports_reasoning=caps.get("supports_reasoning"),
+            supports_reasoning_effort=caps.get("supports_reasoning_effort"),
+            context_size=context_size,
+            model_path=model_path,
+            raw_chat_template_caps=MappingProxyType(raw_caps),
+        )
+
     def _resolve_binary(self) -> str:
         binary = self.config.server_binary
         if Path(binary).parent == Path("."):
@@ -173,11 +278,11 @@ class LLMRuntimeManager:
 
     def _start_process(self) -> None:
         binary = self._resolve_binary()
-        command = self.build_command(binary)
+        self._invalidate_capabilities()
         log.info("llama-server starting")
         try:
             self.process = subprocess.Popen(
-                command,
+                self.build_command(binary),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -204,7 +309,8 @@ class LLMRuntimeManager:
             except (OSError, ValueError):
                 pass
 
-        threading.Thread(target=read_logs, name="llama-server-logs", daemon=True).start()
+        self._log_thread = threading.Thread(target=read_logs, name="llama-server-logs", daemon=True)
+        self._log_thread.start()
 
     def _wait_for_ready(self) -> None:
         deadline = time.monotonic() + self.config.startup_timeout_seconds
@@ -214,8 +320,7 @@ class LLMRuntimeManager:
                 raise LLMRuntimeError(self._with_logs("llama-server encerrou durante a inicializacao"))
             status = self._health_status()
             if status == 200:
-                self.state = LLMRuntimeState.READY
-                log.info("llama-server ready")
+                self._become_ready()
                 return
             if status not in {None, 503}:
                 self._cleanup_after_failure()
@@ -232,16 +337,22 @@ class LLMRuntimeManager:
     def _has_running_owned_process(self) -> bool:
         return self.owns_process and self.process is not None and self.process.poll() is None
 
+    def _invalidate_capabilities(self) -> None:
+        self.capabilities = None
+
     def _forget_dead_owned_process(self) -> None:
         if self.owns_process and self.process is not None and self.process.poll() is not None:
             log.warning("llama-server exited unexpectedly")
             self.process = None
             self.owns_process = False
+            self._invalidate_capabilities()
             self.state = LLMRuntimeState.FAILED
+            self._join_log_thread()
 
     def _cleanup_after_failure(self) -> None:
         if self.owns_process and self.process is not None:
             self._stop_owned_process()
+        self._invalidate_capabilities()
         self.state = LLMRuntimeState.FAILED
 
     def _stop_owned_process(self) -> None:
@@ -259,14 +370,39 @@ class LLMRuntimeManager:
                 process.wait()
         self.process = None
         self.owns_process = False
+        self._join_log_thread()
         log.info("llama-server stopped")
 
-    def close(self) -> None:
-        """Stop only a process started by this manager. Safe to call repeatedly."""
+    def _join_log_thread(self) -> None:
+        if self._log_thread is not None:
+            self._log_thread.join(timeout=self._LOG_JOIN_TIMEOUT_SECONDS)
+            self._log_thread = None
+
+    def snapshot(self) -> LLMRuntimeSnapshot:
+        """Return the known state without making any HTTP requests."""
         with self._lock:
+            pid = self.process.pid if self.process is not None else None
+            return LLMRuntimeSnapshot(
+                state=self.state,
+                mode=self.config.runtime_mode,
+                owns_process=self.owns_process,
+                pid=pid,
+                model=self.config.model,
+                base_url=self.config.base_url,
+                capabilities=self.capabilities,
+            )
+
+    def close(self) -> None:
+        """Stop an owned process and permanently close this manager."""
+        with self._lock:
+            if self._closed:
+                return
             if self.owns_process:
                 self._stop_owned_process()
             self.process = None
             self.owns_process = False
+            self._invalidate_capabilities()
             self.state = LLMRuntimeState.STOPPED
-            self._client.close()
+            self._closed = True
+            if self._owns_client:
+                self._client.close()

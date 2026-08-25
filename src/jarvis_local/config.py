@@ -26,6 +26,7 @@ class LLMConfig:
     gpu_layers: int = 99
     device: str = ""
     jinja: bool = True
+    require_tool_support: bool = True
 
 
 @dataclass(frozen=True)

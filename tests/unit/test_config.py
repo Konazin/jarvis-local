@@ -7,6 +7,7 @@ def test_defaults() -> None:
     config = load_config()
     assert config.assistant.name == "Yuki"
     assert config.llm.context_size == 4096
+    assert config.llm.require_tool_support
     assert config.tts.voice == "pf_dora"
 
 

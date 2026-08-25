@@ -18,6 +18,7 @@ shutdown_timeout_seconds = 5
 gpu_layers = 99
 device = ""
 jinja = true
+require_tool_support = true
 
 [tts]
 engine = "kokoro"
