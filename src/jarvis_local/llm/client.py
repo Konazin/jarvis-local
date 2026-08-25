@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 import httpx
 
@@ -49,7 +49,7 @@ class LLMClient:
         """Metrics for the most recent chat, including useful partial failures."""
         return self._last_metrics
 
-    def chat(self, text: str, registry: ToolRegistry) -> str:
+    def chat(self, text: str, registry: ToolRegistry, history: Sequence[Any] | None = None) -> str:
         started_at = time.perf_counter()
         self._last_metrics = None
         request_count = 0
@@ -62,6 +62,7 @@ class LLMClient:
         timing_totals: dict[str, float | None] = {"prompt_ms": None, "predicted_ms": None}
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt()},
+            *self._copy_history(history),
             {"role": "user", "content": text},
         ]
         try:
@@ -82,7 +83,9 @@ class LLMClient:
                         raise LLMError("resposta do llama-server sem conteudo")
                     self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
                     return content.strip()
-                messages.append(message)
+                tool_call_message = dict(message)
+                tool_call_message.setdefault("role", "assistant")
+                messages.append(tool_call_message)
                 for call in calls:
                     name = call.get("function", {}).get("name")
                     try:
@@ -111,6 +114,21 @@ class LLMClient:
     def _system_prompt(self) -> str:
         control = "/think" if self.config.thinking else "/no_think"
         return f"{control}\n{BASE_SYSTEM_PROMPT}"
+
+    @staticmethod
+    def _copy_history(history: Sequence[Any] | None) -> list[dict[str, str]]:
+        if history is None:
+            return []
+        copied: list[dict[str, str]] = []
+        for message in history:
+            if isinstance(message, dict):
+                role, content = message.get("role"), message.get("content")
+            else:
+                role, content = getattr(message, "role", None), getattr(message, "content", None)
+            if role not in {"user", "assistant"} or not isinstance(content, str):
+                raise LLMError("history de conversa invalido")
+            copied.append({"role": role, "content": content})
+        return copied
 
     def _request_payload(self, messages: list[dict[str, Any]], registry: ToolRegistry) -> dict[str, Any]:
         payload: dict[str, Any] = {

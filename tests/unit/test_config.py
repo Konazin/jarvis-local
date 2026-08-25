@@ -8,6 +8,7 @@ def test_defaults() -> None:
     assert config.assistant.name == "Yuki"
     assert config.llm.context_size == 4096
     assert config.llm.require_tool_support
+    assert config.conversation.max_turns == 8
     assert config.tts.voice == "pf_dora"
 
 
@@ -36,6 +37,22 @@ def test_valid_file_and_response_limit(tmp_path) -> None:
     ],
 )
 def test_invalid_llm_runtime_config(tmp_path, contents) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        load_config(path)
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "[conversation]\nmax_turns = 0\n",
+        "[conversation]\nmax_turns = -1\n",
+        "[conversation]\nmax_estimated_tokens = 0\n",
+        "[conversation]\nmax_estimated_tokens = -1\n",
+    ],
+)
+def test_invalid_conversation_config(tmp_path, contents) -> None:
     path = tmp_path / "config.toml"
     path.write_text(contents)
     with pytest.raises(ValueError):

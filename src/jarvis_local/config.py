@@ -30,6 +30,13 @@ class LLMConfig:
 
 
 @dataclass(frozen=True)
+class ConversationConfig:
+    enabled: bool = True
+    max_turns: int = 8
+    max_estimated_tokens: int = 2048
+
+
+@dataclass(frozen=True)
 class TTSConfig:
     engine: str = "kokoro"
     language: str = "pt-BR"
@@ -55,6 +62,7 @@ class AudioConfig:
 class Config:
     assistant: AssistantConfig = AssistantConfig()
     llm: LLMConfig = LLMConfig()
+    conversation: ConversationConfig = ConversationConfig()
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
     audio: AudioConfig = AudioConfig()
@@ -80,6 +88,7 @@ def load_config(path: str | Path | None = None) -> Config:
     config = Config(
         AssistantConfig(**_section(data, "assistant")),
         LLMConfig(**_section(data, "llm")),
+        ConversationConfig(**_section(data, "conversation")),
         TTSConfig(**_section(data, "tts")),
         PerformanceConfig(**_section(data, "performance")),
         AudioConfig(**_section(data, "audio")),
@@ -96,6 +105,8 @@ def load_config(path: str | Path | None = None) -> Config:
         raise ValueError("gpu_layers nao pode ser negativo")
     if config.llm.startup_timeout_seconds <= 0 or config.llm.shutdown_timeout_seconds <= 0:
         raise ValueError("startup_timeout_seconds e shutdown_timeout_seconds devem ser positivos")
+    if config.conversation.max_turns < 1 or config.conversation.max_estimated_tokens < 1:
+        raise ValueError("conversation max_turns e max_estimated_tokens devem ser positivos")
     if not 0 < config.performance.memory_pressure_threshold <= 1:
         raise ValueError("memory_pressure_threshold deve estar entre 0 e 1")
     if config.tts.speed <= 0 or config.tts.keep_alive_seconds < 0:

@@ -36,6 +36,10 @@ Com `runtime_mode = "managed"`, o Yuki inicia o `llama-server` de forma preguiç
 
 Com `thinking = false`, o cliente usa `/no_think` como fallback e também envia os controles `enable_thinking=false` e `reasoning_effort=none` compatíveis com llama.cpp/Qwen. Isso ainda não foi validado em hardware real.
 
+### Contexto da sessão
+
+O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.
+
 ## Testes
 
 ```bash

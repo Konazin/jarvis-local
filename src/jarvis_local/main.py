@@ -8,6 +8,7 @@ from .config import load_config
 from .core.assistant import Assistant
 from .llm.client import LLMClient
 from .llm.runtime import LLMRuntimeManager
+from .llm.session import ConversationSession
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_STATUS_TOOL
 from .tts.manager import TTSManager
@@ -22,8 +23,9 @@ def main() -> None:
     tools.register(SYSTEM_STATUS_TOOL)
     llm = LLMClient(config.llm)
     runtime = LLMRuntimeManager(config.llm)
+    session = ConversationSession(config.conversation)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)
-    assistant = Assistant(llm, tools, tts, runtime=runtime)
+    assistant = Assistant(llm, tools, tts, runtime=runtime, session=session)
     llm.on_tool_start, llm.on_tool_finish = assistant.tool_start, assistant.tool_finish
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

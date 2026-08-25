@@ -20,6 +20,12 @@ device = ""
 jinja = true
 require_tool_support = true
 
+[conversation]
+# Contexto apenas em RAM; nao persiste apos fechar o app.
+enabled = true
+max_turns = 8
+max_estimated_tokens = 2048
+
 [tts]
 engine = "kokoro"
 language = "pt-BR"

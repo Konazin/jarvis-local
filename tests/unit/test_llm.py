@@ -25,6 +25,7 @@ def test_normal_response_sends_non_thinking_controls() -> None:
     llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
     assert llm.chat("oi", ToolRegistry()) == "Olá"
     payload = json.loads(requests[0].content)
+    assert [message["role"] for message in payload["messages"]] == ["system", "user"]
     assert "/no_think" in payload["messages"][0]["content"]
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert payload["reasoning_effort"] == "none"
@@ -47,6 +48,69 @@ def test_thinking_enabled_does_not_send_non_thinking_controls() -> None:
     assert "/think" in payload["messages"][0]["content"]
     assert "chat_template_kwargs" not in payload
     assert "reasoning_effort" not in payload
+
+
+def test_history_is_ordered_and_not_mutated() -> None:
+    requests = []
+    history = [{"role": "user", "content": "meu editor é VS Code"}, {"role": "assistant", "content": "certo"}]
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "VS Code"}}]})
+
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat("qual editor?", ToolRegistry(), history=history) == "VS Code"
+    assert history == [{"role": "user", "content": "meu editor é VS Code"}, {"role": "assistant", "content": "certo"}]
+    payload = json.loads(requests[0].content)
+    assert [(message["role"], message["content"]) for message in payload["messages"]] == [
+        ("system", payload["messages"][0]["content"]),
+        ("user", "meu editor é VS Code"),
+        ("assistant", "certo"),
+        ("user", "qual editor?"),
+    ]
+
+
+def test_tool_round_keeps_history_and_current_tool_messages() -> None:
+    requests = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": "1", "function": {"name": "get_system_status", "arguments": "{}"}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "8 GB"}}]}),
+        ]
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    registry = ToolRegistry()
+    registry.register(SYSTEM_STATUS_TOOL)
+    history = [{"role": "user", "content": "meu projeto é Yuki"}, {"role": "assistant", "content": "certo"}]
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat("quanta RAM?", registry, history=history) == "8 GB"
+    assert [message["role"] for message in requests[0]["messages"]] == ["system", "user", "assistant", "user"]
+    assert [message["role"] for message in requests[1]["messages"]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+        "tool",
+    ]
+    assert history == [{"role": "user", "content": "meu projeto é Yuki"}, {"role": "assistant", "content": "certo"}]
 
 
 def test_offline_and_invalid_response() -> None:

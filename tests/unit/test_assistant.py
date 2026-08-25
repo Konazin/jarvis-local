@@ -1,28 +1,35 @@
 import pytest
 
+from jarvis_local.config import ConversationConfig
 from jarvis_local.core.assistant import Assistant
 from jarvis_local.core.state import State
+from jarvis_local.llm.session import ConversationSession
 
 
 class FakeLLM:
-    def chat(self, text, tools):
+    def chat(self, text, tools, history=None):
         return "Você está usando 8 GB de RAM."
 
 
 class FakeTTS:
     def __init__(self):
         self.text = None
+        self.on_done = None
+        self.on_error = None
 
     def speak_async(self, text, on_done, on_error):
-        self.text = text
+        self.text, self.on_done, self.on_error = text, on_done, on_error
 
 
 class RecordingLLM:
-    def __init__(self, events):
-        self.events = events
+    def __init__(self, events, error=None):
+        self.events, self.error, self.histories = events, error, []
 
-    def chat(self, text, tools):
+    def chat(self, text, tools, history=None):
         self.events.append("chat")
+        self.histories.append(tuple(history or ()))
+        if self.error:
+            raise self.error
         return "ok"
 
 
@@ -34,6 +41,10 @@ class RecordingRuntime:
         self.events.append("ready")
         if self.error:
             raise self.error
+
+
+def conversation(**changes):
+    return ConversationSession(ConversationConfig(**changes))
 
 
 def test_text_is_returned_without_waiting_for_tts() -> None:
@@ -52,6 +63,60 @@ def test_runtime_is_ready_before_llm_chat() -> None:
     assistant = Assistant(RecordingLLM(events), object(), FakeTTS(), runtime=RecordingRuntime(events))
     assert assistant.ask("status") == "ok"
     assert events == ["ready", "chat"]
+
+
+def test_success_commits_turn_and_second_ask_receives_history() -> None:
+    events, llm = [], RecordingLLM([])
+    tts = FakeTTS()
+    assistant = Assistant(llm, object(), tts, session=conversation())
+    assistant.ask("meu editor é VS Code")
+    tts.on_done()
+    assistant.ask("qual editor eu uso?")
+    assert [(item.role, item.content) for item in llm.histories[0]] == []
+    assert [(item.role, item.content) for item in llm.histories[1]] == [
+        ("user", "meu editor é VS Code"),
+        ("assistant", "ok"),
+    ]
+    assert assistant.session.snapshot().turn_count == 2
+    assert events == []
+
+
+def test_runtime_and_llm_failures_do_not_commit_partial_turns() -> None:
+    runtime_session = conversation()
+    assistant = Assistant(
+        RecordingLLM([]), object(), runtime=RecordingRuntime([], RuntimeError("offline")), session=runtime_session
+    )
+    with pytest.raises(RuntimeError, match="offline"):
+        assistant.ask("status")
+    assert runtime_session.snapshot().turn_count == 0
+
+    llm_session = conversation()
+    assistant = Assistant(RecordingLLM([], RuntimeError("llm")), object(), session=llm_session)
+    with pytest.raises(RuntimeError, match="llm"):
+        assistant.ask("status")
+    assert llm_session.snapshot().turn_count == 0
+
+
+def test_tts_failure_keeps_completed_turn_and_returns_to_idle() -> None:
+    tts, session = FakeTTS(), conversation()
+    assistant = Assistant(RecordingLLM([]), object(), tts, session=session)
+    assert assistant.ask("status") == "ok"
+    tts.on_error(RuntimeError("voice"))
+    assert session.snapshot().turn_count == 1
+    assert assistant.state.current == State.IDLE
+
+
+def test_disabled_session_and_clear_conversation() -> None:
+    disabled = conversation(enabled=False)
+    assistant = Assistant(RecordingLLM([]), object(), FakeTTS(), session=disabled)
+    assistant.ask("status")
+    assert disabled.snapshot().turn_count == 0
+
+    active = conversation()
+    assistant = Assistant(RecordingLLM([]), object(), FakeTTS(), session=active)
+    assistant.ask("status")
+    assistant.clear_conversation()
+    assert active.snapshot().messages == ()
 
 
 def test_runtime_error_returns_assistant_to_idle_without_calling_llm() -> None:
