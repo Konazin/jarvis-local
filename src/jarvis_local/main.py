@@ -11,7 +11,7 @@ from .llm.runtime import LLMRuntimeManager
 from .llm.session import ConversationSession
 from .tools.executor import ToolExecutor
 from .tools.registry import ToolRegistry
-from .tools.system import SYSTEM_STATUS_TOOL
+from .tools.system import SYSTEM_TOOLS
 from .tts.manager import TTSManager
 from .ui.confirmation import ConfirmationBridge
 from .ui.tray import Tray
@@ -22,7 +22,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     config = load_config("config.toml") if Path("config.toml").exists() else load_config()
     tools = ToolRegistry()
-    tools.register(SYSTEM_STATUS_TOOL)
+    for tool in SYSTEM_TOOLS:
+        tools.register(tool)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     confirmation = ConfirmationBridge()

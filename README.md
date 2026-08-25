@@ -1,5 +1,7 @@
 # Jarvis Local / Yuki
 
+As tools atuais consultam CPU/RAM, informações do sistema, disco, bateria, uptime, busca de processos e processos por uso de memória. Todas são `SAFE`, somente leitura, e não alteram o sistema.
+
 Assistente desktop local e leve para Linux, em desenvolvimento inicial.
 
 ## Arquitetura

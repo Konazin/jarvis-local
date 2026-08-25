@@ -29,4 +29,4 @@ def test_system_status_remains_safe_without_confirmation() -> None:
     registry.register(SYSTEM_STATUS_TOOL)
     executor = ToolExecutor(registry, approval_handler=lambda _request: (_ for _ in ()).throw(AssertionError()))
     result = executor.execute("get_system_status", {})
-    assert set(result) == {"cpu_percent", "memory_percent", "memory_used", "memory_total", "memory_available"}
+    assert {"cpu_percent", "memory_percent", "memory_used", "memory_total", "memory_available"} <= set(result)

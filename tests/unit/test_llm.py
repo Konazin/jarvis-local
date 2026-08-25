@@ -1,15 +1,17 @@
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from jarvis_local.config import load_config
 from jarvis_local.llm.client import LLMClient, LLMError
+from jarvis_local.tools import system
 from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
-from jarvis_local.tools.system import SYSTEM_STATUS_TOOL
+from jarvis_local.tools.system import DISK_USAGE_TOOL, FIND_PROCESSES_TOOL, SYSTEM_STATUS_TOOL
 
 
 def client(response: httpx.Response, **config_changes) -> LLMClient:
@@ -330,3 +332,65 @@ def test_tool_policy_results_continue_the_completion_and_callbacks_match_executi
         "status": "error",
         "error": "boom",
     }
+
+
+@pytest.mark.parametrize(
+    ("question", "tool_name", "arguments", "tool"),
+    [
+        ("Quanto espaço livre tenho?", "get_disk_usage", "{}", DISK_USAGE_TOOL),
+        ("O Discord está aberto?", "find_processes", '{"query": "discord"}', FIND_PROCESSES_TOOL),
+    ],
+)
+def test_system_tool_flow_returns_result_to_llm(monkeypatch, question, tool_name, arguments, tool) -> None:
+    monkeypatch.setattr(
+        system.psutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=10, used=4, free=6, percent=40.0),
+    )
+    monkeypatch.setattr(
+        system.psutil,
+        "process_iter",
+        lambda _attrs: [
+            SimpleNamespace(
+                info={
+                    "pid": 7,
+                    "name": "Discord.exe",
+                    "status": "running",
+                    "memory_info": SimpleNamespace(rss=1024),
+                }
+            )
+        ],
+    )
+    requests = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": "system", "function": {"name": tool_name, "arguments": arguments}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "resultado final"}}]}),
+        ]
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    registry = ToolRegistry()
+    registry.register(tool)
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert llm.chat(question, registry) == "resultado final"
+    tool_result = json.loads(requests[1]["messages"][-1]["content"])
+    assert "status" not in tool_result
+    assert "processes" in tool_result or "free" in tool_result
