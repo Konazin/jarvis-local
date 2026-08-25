@@ -4,6 +4,7 @@ from enum import Enum
 class State(str, Enum):
     IDLE = "IDLE"
     THINKING = "THINKING"
+    CONFIRMING = "CONFIRMING"
     EXECUTING = "EXECUTING"
     SPEAKING = "SPEAKING"
     ERROR = "ERROR"
@@ -11,7 +12,8 @@ class State(str, Enum):
 
 _TRANSITIONS = {
     State.IDLE: {State.THINKING},
-    State.THINKING: {State.EXECUTING, State.SPEAKING, State.ERROR},
+    State.THINKING: {State.CONFIRMING, State.EXECUTING, State.SPEAKING, State.ERROR},
+    State.CONFIRMING: {State.THINKING, State.EXECUTING, State.ERROR},
     State.EXECUTING: {State.THINKING, State.ERROR},
     State.SPEAKING: {State.IDLE, State.ERROR},
     State.ERROR: {State.IDLE},

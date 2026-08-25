@@ -132,3 +132,21 @@ def test_runtime_error_returns_assistant_to_idle_without_calling_llm() -> None:
     assert events == ["ready"]
     assert assistant.state.current == State.IDLE
     assert states == ["THINKING", "ERROR", "IDLE"]
+
+
+def test_tool_policy_callbacks_follow_confirming_and_execution_states() -> None:
+    states = []
+    assistant = Assistant(RecordingLLM([]), object(), on_state_change=states.append)
+    assistant._transition(State.THINKING)
+    assistant.tool_start("safe")
+    assistant.tool_finish("safe")
+    assert states == ["THINKING", "EXECUTING", "THINKING"]
+
+    assistant.confirmation_start(object())
+    assistant.confirmation_finish(object(), True)
+    assistant.tool_start("confirm")
+    assistant.tool_finish("confirm")
+    assert states == ["THINKING", "EXECUTING", "THINKING", "CONFIRMING", "THINKING", "EXECUTING", "THINKING"]
+
+    # A dangerous policy result has no confirmation or execution callback.
+    assert assistant.state.current == State.THINKING

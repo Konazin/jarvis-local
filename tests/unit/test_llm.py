@@ -6,6 +6,8 @@ import pytest
 
 from jarvis_local.config import load_config
 from jarvis_local.llm.client import LLMClient, LLMError
+from jarvis_local.tools.base import RiskLevel, Tool
+from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 from jarvis_local.tools.system import SYSTEM_STATUS_TOOL
 
@@ -273,3 +275,58 @@ def test_tool_round_limit() -> None:
     )
     with pytest.raises(LLMError):
         client(response).chat("oi", ToolRegistry())
+
+
+def test_tool_policy_results_continue_the_completion_and_callbacks_match_execution() -> None:
+    def run_case(risk, approval=None, callback=None):
+        requests, events = [], []
+        registry = ToolRegistry()
+        registry.register(Tool("action", "action", {"type": "object"}, risk, callback or (lambda: {"ok": True})))
+        responses = iter(
+            [
+                httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "tool_calls": [{"id": "1", "function": {"name": "action", "arguments": "{}"}}]
+                                }
+                            }
+                        ]
+                    },
+                ),
+                httpx.Response(200, json={"choices": [{"message": {"content": "final"}}]}),
+            ]
+        )
+
+        def handler(request):
+            requests.append(json.loads(request.content))
+            return next(responses)
+
+        llm = LLMClient(
+            load_config().llm,
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            tool_executor=ToolExecutor(registry, approval),
+            on_tool_start=lambda _name: events.append("start"),
+            on_tool_finish=lambda _name: events.append("finish"),
+            on_confirmation_start=lambda _request: events.append("confirming"),
+            on_confirmation_finish=lambda _request, _approved: events.append("confirmed"),
+        )
+        assert llm.chat("do it", registry) == "final"
+        return json.loads(requests[1]["messages"][-1]["content"]), events
+
+    assert run_case(RiskLevel.SAFE) == ({"ok": True}, ["start", "finish"])
+    assert run_case(RiskLevel.CONFIRM, lambda _request: True) == (
+        {"ok": True},
+        ["confirming", "confirmed", "start", "finish"],
+    )
+    assert run_case(RiskLevel.CONFIRM, lambda _request: False) == (
+        {"status": "rejected", "reason": "user_rejected"},
+        ["confirming", "confirmed"],
+    )
+    assert run_case(RiskLevel.DANGEROUS) == ({"status": "blocked", "reason": "dangerous_tool"}, [])
+    assert run_case(RiskLevel.SAFE, callback=lambda: (_ for _ in ()).throw(RuntimeError("boom")))[0] == {
+        "status": "error",
+        "error": "boom",
+    }

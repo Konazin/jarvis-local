@@ -9,9 +9,11 @@ from .core.assistant import Assistant
 from .llm.client import LLMClient
 from .llm.runtime import LLMRuntimeManager
 from .llm.session import ConversationSession
+from .tools.executor import ToolExecutor
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_STATUS_TOOL
 from .tts.manager import TTSManager
+from .ui.confirmation import ConfirmationBridge
 from .ui.tray import Tray
 from .ui.window import Window
 
@@ -21,14 +23,17 @@ def main() -> None:
     config = load_config("config.toml") if Path("config.toml").exists() else load_config()
     tools = ToolRegistry()
     tools.register(SYSTEM_STATUS_TOOL)
-    llm = LLMClient(config.llm)
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    confirmation = ConfirmationBridge()
+    executor = ToolExecutor(tools, approval_handler=confirmation.request)
+    llm = LLMClient(config.llm, tool_executor=executor)
     runtime = LLMRuntimeManager(config.llm)
     session = ConversationSession(config.conversation)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)
     assistant = Assistant(llm, tools, tts, runtime=runtime, session=session)
     llm.on_tool_start, llm.on_tool_finish = assistant.tool_start, assistant.tool_finish
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
+    llm.on_confirmation_start, llm.on_confirmation_finish = assistant.confirmation_start, assistant.confirmation_finish
     window = Window(assistant)
     tray = Tray(window, tts, app.quit)
     tray.show()
@@ -36,6 +41,7 @@ def main() -> None:
     try:
         exit_code = app.exec()
     finally:
+        confirmation.close()
         tts.close()
         runtime.close()
         llm.close()

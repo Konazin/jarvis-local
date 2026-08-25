@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 import httpx
 
+from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -14,7 +15,9 @@ BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
 Responda em português brasileiro de forma curta e natural.
 Use as ferramentas disponíveis quando forem necessárias.
 Nunca invente o resultado de uma ferramenta.
-Nunca diga que executou uma ação antes de receber confirmação da execução."""
+Tools SAFE podem executar automaticamente; tools CONFIRM podem exigir autorização do usuário.
+`user_rejected` significa que o usuário negou, e `dangerous_tool` que a política bloqueou a ação.
+Nunca alegue que uma tool executou se o resultado indicar rejeição, bloqueio ou erro."""
 
 
 @dataclass(frozen=True)
@@ -36,12 +39,22 @@ class LLMError(RuntimeError):
 
 class LLMClient:
     def __init__(
-        self, config: Any, client: httpx.Client | None = None, on_tool_start=None, on_tool_finish=None
+        self,
+        config: Any,
+        client: httpx.Client | None = None,
+        on_tool_start=None,
+        on_tool_finish=None,
+        tool_executor: ToolExecutor | None = None,
+        on_confirmation_start=None,
+        on_confirmation_finish=None,
     ) -> None:
         self.config = config
         self.client = client or httpx.Client(timeout=config.timeout_seconds)
         self.on_tool_start = on_tool_start
         self.on_tool_finish = on_tool_finish
+        self.tool_executor = tool_executor
+        self.on_confirmation_start = on_confirmation_start
+        self.on_confirmation_finish = on_confirmation_finish
         self._last_metrics: LLMCallMetrics | None = None
 
     @property
@@ -89,18 +102,34 @@ class LLMClient:
                 for call in calls:
                     name = call.get("function", {}).get("name")
                     try:
-                        self._callback(self.on_tool_start, name)
                         arguments = json.loads(call.get("function", {}).get("arguments", "{}"))
-                        result = registry.execute(name, arguments)
+                        if not isinstance(arguments, dict):
+                            raise ValueError("argumentos da tool devem ser um objeto")
+                        executor = self.tool_executor or ToolExecutor(registry)
+                        result = executor.execute(
+                            name,
+                            arguments,
+                            on_confirmation_start=lambda request: self._callback(self.on_confirmation_start, request),
+                            on_confirmation_finish=lambda request, approved: self._callback(
+                                self.on_confirmation_finish, request, approved
+                            ),
+                            on_execution_start=lambda tool_name: self._callback(self.on_tool_start, tool_name),
+                            on_execution_finish=lambda tool_name: self._callback(self.on_tool_finish, tool_name),
+                        )
                     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                         result = {"error": str(exc)}
-                    finally:
-                        self._callback(self.on_tool_finish, name)
+                    try:
+                        serialized_result = json.dumps(result, ensure_ascii=False)
+                    except (TypeError, ValueError) as exc:
+                        serialized_result = json.dumps(
+                            {"status": "error", "reason": "non_serializable_result", "error": str(exc)},
+                            ensure_ascii=False,
+                        )
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": call.get("id", ""),
-                            "content": json.dumps(result, ensure_ascii=False),
+                            "content": serialized_result,
                         }
                     )
         except (LLMError, httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
@@ -196,12 +225,12 @@ class LLMClient:
         )
 
     @staticmethod
-    def _callback(callback, name: str | None) -> None:
+    def _callback(callback, *args) -> None:
         if callback:
             try:
-                callback(name)
+                callback(*args)
             except Exception:
-                log.exception("tool callback failed: %s", name)
+                log.exception("tool callback failed")
 
     def close(self) -> None:
         self.client.close()

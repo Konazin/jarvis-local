@@ -29,6 +29,14 @@ class Assistant:
         if self.state.current == State.EXECUTING:
             self._transition(State.THINKING)
 
+    def confirmation_start(self, _request) -> None:
+        if self.state.current == State.THINKING:
+            self._transition(State.CONFIRMING)
+
+    def confirmation_finish(self, _request, _approved: bool) -> None:
+        if self.state.current == State.CONFIRMING:
+            self._transition(State.THINKING)
+
     def ask(self, text: str) -> str:
         self._transition(State.THINKING)
         try:
