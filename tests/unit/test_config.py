@@ -27,9 +27,12 @@ def test_valid_file_and_response_limit(tmp_path) -> None:
 
 def test_application_config_is_dynamic_and_defensive(tmp_path) -> None:
     path = tmp_path / "config.toml"
-    path.write_text('[applications.Firefox]\nname = "Firefox"\ncommand = ["firefox"]\n')
+    path.write_text(
+        '[applications.Firefox]\nname = "Firefox"\ncommand = ["firefox"]\nprocess_names = [" Firefox.EXE "]\n'
+    )
     config = load_config(path)
     assert config.applications["firefox"].command == ("firefox",)
+    assert config.applications["firefox"].process_names == ("firefox.exe",)
     with pytest.raises(TypeError):
         config.applications["firefox"] = config.applications["firefox"]
 
@@ -41,6 +44,7 @@ def test_application_config_is_dynamic_and_defensive(tmp_path) -> None:
         '[applications.firefox]\nname = "Firefox"\ncommand = []\n',
         '[applications.firefox]\nname = "Firefox"\ncommand = [""]\n',
         '[applications.firefox]\nname = ""\ncommand = ["firefox"]\n',
+        '[applications.firefox]\nname = "Firefox"\ncommand = ["firefox"]\nprocess_names = ["/usr/bin/firefox"]\n',
     ],
 )
 def test_invalid_application_config(tmp_path, contents) -> None:

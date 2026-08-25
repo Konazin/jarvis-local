@@ -17,6 +17,8 @@ class Tool:
     risk_level: RiskLevel
     execute: Callable[..., dict[str, Any]]
     validate: Callable[..., Any] | None = None
+    precheck: Callable[..., dict[str, Any] | None] | None = None
+    confirmation_description: Callable[..., str] | None = None
 
     def schema(self) -> dict[str, Any]:
         return {

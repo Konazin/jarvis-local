@@ -42,6 +42,8 @@ Com `thinking = false`, o cliente usa `/no_think` como fallback e também envia 
 
 Os aplicativos que a Yuki pode abrir precisam ser cadastrados na seção `[applications]` do `config.toml`; os exemplos em `config.example.toml` podem ser alterados localmente. O LLM recebe apenas aliases, e abrir um aplicativo exige confirmação. Os comandos reais ficam na configuração confiável e nunca são fornecidos pelo modelo. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
 
+A Yuki também lista aplicativos configurados em execução e pode solicitar seu fechamento, sempre com confirmação. O fechamento compara nomes de processo exatos definidos em `process_names`; não há encerramento arbitrário por PID, shell ou comando externo.
+
 ### Contexto da sessão
 
 O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.

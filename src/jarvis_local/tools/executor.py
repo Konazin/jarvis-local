@@ -46,6 +46,13 @@ class ToolExecutor:
         except KeyError:
             return {"status": "error", "reason": "unknown_tool"}
         execution_arguments = deepcopy(arguments)
+        if tool.precheck is not None:
+            try:
+                precheck_result = tool.precheck(**execution_arguments)
+            except Exception as exc:
+                return {"status": "error", "error": str(exc)}
+            if precheck_result is not None:
+                return precheck_result
         if tool.validate is not None:
             try:
                 tool.validate(**execution_arguments)
@@ -57,9 +64,15 @@ class ToolExecutor:
         if tool.risk_level is RiskLevel.CONFIRM:
             if self.approval_handler is None:
                 return {"status": "rejected", "reason": "confirmation_unavailable"}
+            description = tool.description
+            if tool.confirmation_description is not None:
+                try:
+                    description = tool.confirmation_description(**deepcopy(arguments))
+                except Exception:
+                    log.exception("tool confirmation description failed: %s", name)
             request = ToolConfirmationRequest(
                 tool_name=tool.name,
-                description=tool.description,
+                description=description,
                 arguments=MappingProxyType(deepcopy(arguments)),
                 risk_level=tool.risk_level,
             )

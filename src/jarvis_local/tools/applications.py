@@ -6,11 +6,15 @@ import webbrowser
 from collections.abc import Callable
 from typing import Any
 
+import psutil
+
 from jarvis_local.apps.catalog import ApplicationCatalog
 
 from .base import RiskLevel, Tool
 
 MAX_URL_LENGTH = 2048
+WAIT_TIMEOUT_SECONDS = 3.0
+_PROCESS_ERRORS = (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess)
 
 
 def list_applications(catalog: ApplicationCatalog) -> dict[str, list[dict[str, str]]]:
@@ -19,6 +23,96 @@ def list_applications(catalog: ApplicationCatalog) -> dict[str, list[dict[str, s
 
 def _validate_application(catalog: ApplicationCatalog, application: str) -> None:
     catalog.resolve(application)
+
+
+def _process_iter(process_iter: Callable[..., Any] | None) -> Callable[..., Any]:
+    return psutil.process_iter if process_iter is None else process_iter
+
+
+def _processes_for(process_names: tuple[str, ...], process_iter: Callable[..., Any]) -> list[Any]:
+    expected_names = set(process_names)
+    matches = []
+    for process in process_iter(["pid", "name"]):
+        try:
+            name = process.info.get("name")
+            if isinstance(name, str) and name.strip().casefold() in expected_names:
+                matches.append(process)
+        except _PROCESS_ERRORS:
+            continue
+    return matches
+
+
+def list_running_applications(
+    catalog: ApplicationCatalog, process_iter: Callable[..., Any] | None = None
+) -> dict[str, list[dict[str, Any]]]:
+    counts = {alias: 0 for alias in catalog.aliases()}
+    names_to_aliases: dict[str, list[str]] = {}
+    for alias in catalog.aliases():
+        for process_name in catalog.resolve(alias).process_names:
+            names_to_aliases.setdefault(process_name, []).append(alias)
+    for process in _process_iter(process_iter)(["pid", "name"]):
+        try:
+            name = process.info.get("name")
+            normalized_name = name.strip().casefold() if isinstance(name, str) else ""
+            for alias in names_to_aliases.get(normalized_name, ()):
+                counts[alias] += 1
+        except _PROCESS_ERRORS:
+            continue
+    return {
+        "applications": [
+            {
+                "alias": alias,
+                "name": catalog.resolve(alias).display_name,
+                "running": counts[alias] > 0,
+                "instances": counts[alias],
+            }
+            for alias in catalog.aliases()
+        ]
+    }
+
+
+def _validate_close_application(
+    catalog: ApplicationCatalog, process_iter: Callable[..., Any], application: str
+) -> dict[str, Any] | None:
+    definition = catalog.resolve(application)
+    if not definition.process_names:
+        raise ValueError(f"aplicação sem process_names configurados: {definition.alias}")
+    if not _processes_for(definition.process_names, process_iter):
+        return {"closed": False, "reason": "not_running", "application": definition.alias}
+    return None
+
+
+def _close_application(
+    catalog: ApplicationCatalog, process_iter: Callable[..., Any], application: str
+) -> dict[str, Any]:
+    definition = catalog.resolve(application)
+    if not definition.process_names:
+        raise ValueError(f"aplicação sem process_names configurados: {definition.alias}")
+    processes = _processes_for(definition.process_names, process_iter)
+    if not processes:
+        return {"closed": False, "reason": "not_running", "application": definition.alias}
+
+    pending = []
+    disappeared = 0
+    for process in processes:
+        try:
+            process.terminate()
+            pending.append(process)
+        except psutil.NoSuchProcess:
+            disappeared += 1
+        except (psutil.AccessDenied, psutil.ZombieProcess):
+            pending.append(process)
+    gone, alive = psutil.wait_procs(pending, timeout=WAIT_TIMEOUT_SECONDS)
+    terminated = disappeared + len(gone)
+    still_running = len(alive)
+    return {
+        "application": definition.alias,
+        "requested_instances": len(processes),
+        "terminated": terminated,
+        "disappeared": disappeared,
+        "still_running": still_running,
+        "closed": still_running == 0,
+    }
 
 
 def _open_application(catalog: ApplicationCatalog, launcher: Callable[..., Any], application: str) -> dict[str, Any]:
@@ -62,9 +156,11 @@ def build_application_tools(
     catalog: ApplicationCatalog,
     launcher: Callable[..., Any] | None = None,
     opener: Callable[[str], bool] | None = None,
+    process_iter: Callable[..., Any] | None = None,
 ) -> tuple[Tool, ...]:
     launcher = subprocess.Popen if launcher is None else launcher
     opener = webbrowser.open if opener is None else opener
+    process_iter = _process_iter(process_iter)
     application_parameters = {
         "type": "object",
         "properties": {
@@ -95,8 +191,47 @@ def build_application_tools(
                 RiskLevel.CONFIRM,
                 lambda application: _open_application(catalog, launcher, application),
                 validate=lambda application: _validate_application(catalog, application),
+                confirmation_description=lambda application: (
+                    f"A Yuki quer abrir:\n\n{catalog.resolve(application).display_name}"
+                ),
             )
         )
+    close_aliases = [alias for alias in catalog.aliases() if catalog.resolve(alias).process_names]
+    tools.append(
+        Tool(
+            "list_running_applications",
+            "Lista os aplicativos configurados que estão em execução.",
+            {"type": "object", "properties": {}, "additionalProperties": False},
+            RiskLevel.SAFE,
+            lambda: list_running_applications(catalog, process_iter),
+        )
+    )
+    tools.append(
+        Tool(
+            "close_application",
+            "Fecha uma aplicação configurada após confirmação do usuário.",
+            {
+                "type": "object",
+                "properties": {
+                    "application": {
+                        "type": "string",
+                        "enum": close_aliases,
+                        "description": "Alias do aplicativo configurado.",
+                    }
+                },
+                "required": ["application"],
+                "additionalProperties": False,
+            },
+            RiskLevel.CONFIRM,
+            lambda application: _close_application(catalog, process_iter, application),
+            precheck=lambda application: _validate_close_application(catalog, process_iter, application),
+            confirmation_description=lambda application: (
+                "A Yuki quer fechar:\n\n"
+                f"{catalog.resolve(application).display_name}\n\n"
+                "Isso pode encerrar processos do aplicativo e causar perda de dados não salvos."
+            ),
+        )
+    )
     tools.append(
         Tool(
             "open_url",

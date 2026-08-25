@@ -64,7 +64,7 @@ class ConfirmationBridge(QObject):
         dialog = QMessageBox()
         dialog.setWindowTitle("Yuki — Confirmar ação")
         dialog.setText(
-            f"A Yuki quer executar:\n\n{request.description}\n\n"
+            f"{request.description}\n\n"
             f"Tool: {request.tool_name}\n\nArgumentos:\n{format_confirmation_arguments(request.arguments)}"
         )
         confirm = dialog.addButton("Confirmar", QMessageBox.ButtonRole.AcceptRole)

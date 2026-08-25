@@ -66,6 +66,7 @@ class AudioConfig:
 class ApplicationConfig:
     name: str
     command: tuple[str, ...]
+    process_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -76,6 +77,8 @@ class ApplicationConfig:
         if any(not isinstance(item, str) or not item.strip() for item in command):
             raise ValueError("todos os itens de command devem ser strings não vazias")
         object.__setattr__(self, "command", command)
+        definition = ApplicationDefinition("application", self.name, self.command, self.process_names)
+        object.__setattr__(self, "process_names", definition.process_names)
 
 
 @dataclass(frozen=True)
@@ -103,12 +106,16 @@ def _applications(data: dict) -> Mapping[str, ApplicationConfig]:
         if not isinstance(values, dict):
             raise ValueError(f"[applications.{alias}] deve ser uma tabela TOML")
         try:
-            definition = ApplicationDefinition(alias, values["name"], values["command"])
+            definition = ApplicationDefinition(
+                alias, values["name"], values["command"], values.get("process_names", ())
+            )
         except KeyError as exc:
             raise ValueError(f"[applications.{alias}] requer name e command") from exc
         if definition.alias in parsed:
             raise ValueError(f"alias duplicado: {definition.alias}")
-        parsed[definition.alias] = ApplicationConfig(definition.display_name, definition.command)
+        parsed[definition.alias] = ApplicationConfig(
+            definition.display_name, definition.command, definition.process_names
+        )
     return MappingProxyType(parsed)
 
 

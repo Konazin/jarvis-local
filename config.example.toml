@@ -46,15 +46,19 @@ output_device = "default"
 [applications.firefox]
 name = "Firefox"
 command = ["firefox"]
+process_names = ["firefox", "firefox.exe"]
 
 [applications.discord]
 name = "Discord"
 command = ["discord"]
+process_names = ["discord", "discord.exe"]
 
 [applications.spotify]
 name = "Spotify"
 command = ["spotify"]
+process_names = ["spotify", "spotify.exe"]
 
 [applications.vscode]
 name = "Visual Studio Code"
 command = ["code"]
+process_names = ["code", "code.exe"]

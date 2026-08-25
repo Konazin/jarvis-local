@@ -22,6 +22,7 @@ class ApplicationDefinition:
     alias: str
     display_name: str
     command: tuple[str, ...]
+    process_names: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "alias", normalize_alias(self.alias))
@@ -33,6 +34,18 @@ class ApplicationDefinition:
         if any(not isinstance(item, str) or not item.strip() for item in command):
             raise ValueError("todos os itens de command devem ser strings não vazias")
         object.__setattr__(self, "command", command)
+        if not isinstance(self.process_names, (tuple, list)):
+            raise ValueError("process_names deve ser uma lista ou tupla")
+        normalized_names: list[str] = []
+        for process_name in self.process_names:
+            if not isinstance(process_name, str) or not process_name.strip():
+                raise ValueError("todos os process_names devem ser strings não vazias")
+            if any(char in process_name for char in "/\\"):
+                raise ValueError("process_names devem ser nomes, não caminhos")
+            if any(ord(char) < 32 or ord(char) == 127 for char in process_name):
+                raise ValueError("process_names não podem conter caracteres de controle")
+            normalized_names.append(process_name.strip().casefold())
+        object.__setattr__(self, "process_names", tuple(normalized_names))
 
 
 @dataclass(frozen=True)
