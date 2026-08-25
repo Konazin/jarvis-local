@@ -25,6 +25,31 @@ def test_valid_file_and_response_limit(tmp_path) -> None:
     assert load_config(path).llm.max_tokens == 128
 
 
+def test_application_config_is_dynamic_and_defensive(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('[applications.Firefox]\nname = "Firefox"\ncommand = ["firefox"]\n')
+    config = load_config(path)
+    assert config.applications["firefox"].command == ("firefox",)
+    with pytest.raises(TypeError):
+        config.applications["firefox"] = config.applications["firefox"]
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        '[applications."bad alias"]\nname = "Bad"\ncommand = ["bad"]\n',
+        '[applications.firefox]\nname = "Firefox"\ncommand = []\n',
+        '[applications.firefox]\nname = "Firefox"\ncommand = [""]\n',
+        '[applications.firefox]\nname = ""\ncommand = ["firefox"]\n',
+    ],
+)
+def test_invalid_application_config(tmp_path, contents) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        load_config(path)
+
+
 @pytest.mark.parametrize(
     "contents",
     [

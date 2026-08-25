@@ -1,6 +1,10 @@
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
+
+from .apps.catalog import ApplicationDefinition
 
 
 @dataclass(frozen=True)
@@ -59,6 +63,22 @@ class AudioConfig:
 
 
 @dataclass(frozen=True)
+class ApplicationConfig:
+    name: str
+    command: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name da aplicação não pode estar vazio")
+        if not isinstance(self.command, (tuple, list)) or not self.command:
+            raise ValueError("command da aplicação não pode estar vazio")
+        command = tuple(self.command)
+        if any(not isinstance(item, str) or not item.strip() for item in command):
+            raise ValueError("todos os itens de command devem ser strings não vazias")
+        object.__setattr__(self, "command", command)
+
+
+@dataclass(frozen=True)
 class Config:
     assistant: AssistantConfig = AssistantConfig()
     llm: LLMConfig = LLMConfig()
@@ -66,6 +86,7 @@ class Config:
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
     audio: AudioConfig = AudioConfig()
+    applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
 
 
 def _section(data: dict, key: str) -> dict:
@@ -73,6 +94,22 @@ def _section(data: dict, key: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"[{key}] deve ser uma tabela TOML")
     return value
+
+
+def _applications(data: dict) -> Mapping[str, ApplicationConfig]:
+    raw = _section(data, "applications")
+    parsed: dict[str, ApplicationConfig] = {}
+    for alias, values in raw.items():
+        if not isinstance(values, dict):
+            raise ValueError(f"[applications.{alias}] deve ser uma tabela TOML")
+        try:
+            definition = ApplicationDefinition(alias, values["name"], values["command"])
+        except KeyError as exc:
+            raise ValueError(f"[applications.{alias}] requer name e command") from exc
+        if definition.alias in parsed:
+            raise ValueError(f"alias duplicado: {definition.alias}")
+        parsed[definition.alias] = ApplicationConfig(definition.display_name, definition.command)
+    return MappingProxyType(parsed)
 
 
 def load_config(path: str | Path | None = None) -> Config:
@@ -92,6 +129,7 @@ def load_config(path: str | Path | None = None) -> Config:
         TTSConfig(**_section(data, "tts")),
         PerformanceConfig(**_section(data, "performance")),
         AudioConfig(**_section(data, "audio")),
+        _applications(data),
     )
     if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0 or config.llm.max_tokens < 1:
         raise ValueError("context_size, timeout_seconds e max_tokens devem ser positivos")

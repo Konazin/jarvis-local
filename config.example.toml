@@ -41,3 +41,20 @@ memory_pressure_threshold = 0.85
 
 [audio]
 output_device = "default"
+
+# Exemplos: altere ou remova conforme os aplicativos instalados.
+[applications.firefox]
+name = "Firefox"
+command = ["firefox"]
+
+[applications.discord]
+name = "Discord"
+command = ["discord"]
+
+[applications.spotify]
+name = "Spotify"
+command = ["spotify"]
+
+[applications.vscode]
+name = "Visual Studio Code"
+command = ["code"]

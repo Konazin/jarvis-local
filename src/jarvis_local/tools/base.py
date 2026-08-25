@@ -16,6 +16,7 @@ class Tool:
     parameters: dict[str, Any]
     risk_level: RiskLevel
     execute: Callable[..., dict[str, Any]]
+    validate: Callable[..., Any] | None = None
 
     def schema(self) -> dict[str, Any]:
         return {

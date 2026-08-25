@@ -46,6 +46,11 @@ class ToolExecutor:
         except KeyError:
             return {"status": "error", "reason": "unknown_tool"}
         execution_arguments = deepcopy(arguments)
+        if tool.validate is not None:
+            try:
+                tool.validate(**execution_arguments)
+            except Exception as exc:
+                return {"status": "error", "error": str(exc)}
         if tool.risk_level is RiskLevel.DANGEROUS:
             log.info("tool blocked by policy: %s", name)
             return {"status": "blocked", "reason": "dangerous_tool"}

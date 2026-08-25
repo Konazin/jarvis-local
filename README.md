@@ -38,6 +38,10 @@ Com `runtime_mode = "managed"`, o Yuki inicia o `llama-server` de forma preguiç
 
 Com `thinking = false`, o cliente usa `/no_think` como fallback e também envia os controles `enable_thinking=false` e `reasoning_effort=none` compatíveis com llama.cpp/Qwen. Isso ainda não foi validado em hardware real.
 
+### Ações de aplicativos
+
+Os aplicativos que a Yuki pode abrir precisam ser cadastrados na seção `[applications]` do `config.toml`; os exemplos em `config.example.toml` podem ser alterados localmente. O LLM recebe apenas aliases, e abrir um aplicativo exige confirmação. Os comandos reais ficam na configuração confiável e nunca são fornecidos pelo modelo. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
+
 ### Contexto da sessão
 
 O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.
