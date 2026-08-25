@@ -21,3 +21,21 @@ def test_valid_file_and_response_limit(tmp_path) -> None:
     path = tmp_path / "config.toml"
     path.write_text("[llm]\nmax_tokens = 128\n")
     assert load_config(path).llm.max_tokens == 128
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        "[llm]\nruntime_mode = 'invalid'\n",
+        "[llm]\nmodel_source = 'invalid'\n",
+        "[llm]\nmodel_source = 'local'\n",
+        "[llm]\ngpu_layers = -1\n",
+        "[llm]\nstartup_timeout_seconds = 0\n",
+        "[llm]\nshutdown_timeout_seconds = 0\n",
+    ],
+)
+def test_invalid_llm_runtime_config(tmp_path, contents) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(contents)
+    with pytest.raises(ValueError):
+        load_config(path)

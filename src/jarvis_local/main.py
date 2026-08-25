@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 from .config import load_config
 from .core.assistant import Assistant
 from .llm.client import LLMClient
+from .llm.runtime import LLMRuntimeManager
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_STATUS_TOOL
 from .tts.manager import TTSManager
@@ -20,8 +21,9 @@ def main() -> None:
     tools = ToolRegistry()
     tools.register(SYSTEM_STATUS_TOOL)
     llm = LLMClient(config.llm)
+    runtime = LLMRuntimeManager(config.llm)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)
-    assistant = Assistant(llm, tools, tts)
+    assistant = Assistant(llm, tools, tts, runtime=runtime)
     llm.on_tool_start, llm.on_tool_finish = assistant.tool_start, assistant.tool_finish
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
@@ -33,5 +35,6 @@ def main() -> None:
         exit_code = app.exec()
     finally:
         tts.close()
+        runtime.close()
         llm.close()
     raise SystemExit(exit_code)

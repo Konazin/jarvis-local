@@ -9,6 +9,15 @@ context_size = 4096
 thinking = false
 timeout_seconds = 60
 max_tokens = 256
+runtime_mode = "external"
+server_binary = "llama-server"
+model_source = "hf"
+model_path = ""
+startup_timeout_seconds = 120
+shutdown_timeout_seconds = 5
+gpu_layers = 99
+device = ""
+jinja = true
 
 [tts]
 engine = "kokoro"

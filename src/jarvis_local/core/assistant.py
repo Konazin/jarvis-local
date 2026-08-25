@@ -9,8 +9,8 @@ log = logging.getLogger(__name__)
 
 
 class Assistant:
-    def __init__(self, llm: LLMClient, tools: ToolRegistry, tts=None, on_state_change=None) -> None:
-        self.llm, self.tools, self.tts = llm, tools, tts
+    def __init__(self, llm: LLMClient, tools: ToolRegistry, tts=None, on_state_change=None, runtime=None) -> None:
+        self.llm, self.tools, self.tts, self.runtime = llm, tools, tts, runtime
         self.state = StateMachine()
         self.on_state_change = on_state_change
 
@@ -30,6 +30,8 @@ class Assistant:
     def ask(self, text: str) -> str:
         self._transition(State.THINKING)
         try:
+            if self.runtime is not None:
+                self.runtime.ensure_ready()
             answer = self.llm.chat(text, self.tools)
             if self.tts is not None:
                 self._transition(State.SPEAKING)

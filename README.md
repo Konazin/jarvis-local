@@ -26,7 +26,13 @@ uv sync
 uv run jarvis-local
 ```
 
-O `llama-server` deve estar disponível em `http://127.0.0.1:8080/v1`. O worker Kokoro usa o interpretador configurado em `tts.python`, por padrão `.venv-kokoro/bin/python`.
+O worker Kokoro usa o interpretador configurado em `tts.python`, por padrão `.venv-kokoro/bin/python`.
+
+### Runtime do LLM
+
+Por padrão, `runtime_mode = "external"`: inicie `llama-server` manualmente e mantenha-o saudável em `base_url` (por padrão, `http://127.0.0.1:8080/v1`). O Yuki apenas verifica `GET /health` antes do primeiro chat.
+
+Com `runtime_mode = "managed"`, o Yuki inicia o `llama-server` de forma preguiçosa, na primeira pergunta, e o encerra ao sair. Esse modo requer um `llama-server` já compilado ou instalado, um modelo local ou acessível por `-hf`, e um backend adequado compilado no llama.cpp. O modo managed aceita somente endereços loopback para não expor o servidor na rede local.
 
 ## Testes
 
