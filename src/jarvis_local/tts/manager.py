@@ -57,6 +57,24 @@ class TTSManager:
             self._arm_ttl()
             log.info("TTS worker ready")
 
+    def preload_async(self) -> threading.Thread | None:
+        if self.muted:
+            return None
+
+        def run() -> None:
+            log.info("TTS preload started")
+            try:
+                self.ensure_loaded()
+            except Exception:
+                log.exception("TTS preload failed")
+
+        with self._lock:
+            if self.state in (TTSState.LOADING, TTSState.READY):
+                return None
+        thread = threading.Thread(target=run, name="yuki-tts-preload", daemon=True)
+        thread.start()
+        return thread
+
     def _start_worker(self) -> None:
         python = Path(self.config.python)
         if not python.is_absolute():
@@ -182,6 +200,11 @@ class TTSManager:
         self.muted = muted
 
     def _arm_ttl(self) -> None:
+        if self.config.mode == "resident":
+            if self._timer:
+                self._timer.cancel()
+                self._timer = None
+            return
         if self.config.keep_alive_seconds == 0:
             return
         if self._timer:

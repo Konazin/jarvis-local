@@ -1,3 +1,5 @@
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -88,10 +90,66 @@ def test_close_is_idempotent_and_cancels_timer():
 
 
 def test_only_one_ttl_timer():
-    tts = manager(keep_alive_seconds=60)
+    tts = manager(mode="balanced", keep_alive_seconds=60)
     first = SimpleNamespace(cancel=lambda: setattr(first, "cancelled", True))
     tts._timer = first
     tts._arm_ttl()
     assert getattr(first, "cancelled", False)
     assert tts._timer is not first
     tts.close()
+
+
+def test_resident_mode_does_not_arm_idle_timer():
+    tts = manager(mode="resident", keep_alive_seconds=60)
+    timer = SimpleNamespace(cancel=lambda: setattr(timer, "cancelled", True))
+    tts._timer = timer
+    tts._arm_ttl()
+    assert timer.cancelled
+    assert tts._timer is None
+
+
+def test_preload_is_async_and_failure_is_recoverable():
+    tts = manager(mode="resident")
+    calls = []
+
+    def fail_once():
+        calls.append(True)
+        raise RuntimeError("kokoro offline")
+
+    tts.ensure_loaded = fail_once
+    thread = tts.preload_async()
+    assert thread is not None
+    thread.join(timeout=1)
+    assert calls == [True]
+    assert tts.preload_async() is not None
+
+
+def test_preload_and_speak_share_one_load(monkeypatch):
+    tts = manager(mode="resident")
+    loads = []
+    entered = threading.Event()
+
+    def start_worker():
+        loads.append(True)
+        entered.set()
+        time.sleep(0.02)
+
+    monkeypatch.setattr(tts, "_start_worker", start_worker)
+    monkeypatch.setattr(tts, "_request", lambda _command: ({"status": "ready"}, b""))
+    preload = tts.preload_async()
+    entered.wait(timeout=1)
+    tts.ensure_loaded()
+    preload.join(timeout=1)
+    assert len(loads) == 1
+
+
+def test_memory_pressure_does_not_interrupt_speaking_but_unloads_afterwards():
+    tts = manager(mode="resident")
+    tts._process = FakeProcess()
+    tts._memory = lambda: SimpleNamespace(percent=90)
+    tts.state = TTSState.SPEAKING
+    assert not tts.check_memory_pressure()
+    assert tts.state == TTSState.SPEAKING
+    tts.state = TTSState.READY
+    assert tts.check_memory_pressure()
+    assert tts.state == TTSState.COLD

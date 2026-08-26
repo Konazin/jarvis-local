@@ -27,21 +27,29 @@ class Window(QWidget):
 
     def __init__(self, assistant: Assistant) -> None:
         super().__init__()
+
         self.assistant = assistant
-        self.assistant.on_state_change = self.state_changed.emit
-        self.state_changed.connect(self.status.setText)
+
         self.setWindowTitle("Yuki")
         self.resize(480, 360)
+
         self.status = QLabel("IDLE")
         self.history = QListWidget()
         self.input = QLineEdit()
+
+        self.assistant.on_state_change = self.state_changed.emit
+        self.state_changed.connect(self.status.setText)
+
         self.input.setPlaceholderText("Digite uma mensagem...")
+
         send = QPushButton("Enviar")
         send.clicked.connect(self.ask)
         self.input.returnPressed.connect(self.ask)
+
         row = QHBoxLayout()
         row.addWidget(self.input)
         row.addWidget(send)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self.status)
         layout.addWidget(self.history)

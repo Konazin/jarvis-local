@@ -9,6 +9,22 @@ context_size = 4096
 thinking = false
 timeout_seconds = 60
 max_tokens = 256
+runtime_mode = "external"
+server_binary = "llama-server"
+model_source = "hf"
+model_path = ""
+startup_timeout_seconds = 120
+shutdown_timeout_seconds = 5
+gpu_layers = 99
+device = ""
+jinja = true
+require_tool_support = true
+
+[conversation]
+# Contexto apenas em RAM; nao persiste apos fechar o app.
+enabled = true
+max_turns = 8
+max_estimated_tokens = 2048
 
 [tts]
 engine = "kokoro"
@@ -16,7 +32,7 @@ language = "pt-BR"
 lang_code = "p"
 voice = "pf_dora"
 speed = 1.0
-mode = "balanced"
+mode = "resident"
 keep_alive_seconds = 60
 python = ".venv-kokoro/bin/python"
 
@@ -25,3 +41,24 @@ memory_pressure_threshold = 0.85
 
 [audio]
 output_device = "default"
+
+# Exemplos: altere ou remova conforme os aplicativos instalados.
+[applications.firefox]
+name = "Firefox"
+command = ["firefox"]
+process_names = ["firefox", "firefox.exe"]
+
+[applications.discord]
+name = "Discord"
+command = ["discord"]
+process_names = ["discord", "discord.exe"]
+
+[applications.spotify]
+name = "Spotify"
+command = ["spotify"]
+process_names = ["spotify", "spotify.exe"]
+
+[applications.vscode]
+name = "Visual Studio Code"
+command = ["code"]
+process_names = ["code", "code.exe"]
