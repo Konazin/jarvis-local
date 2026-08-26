@@ -98,6 +98,55 @@ def test_two_raw_registered_tool_calls_fail_without_execution() -> None:
     assert calls == []
 
 
+def test_fenced_and_malformed_raw_registered_tool_calls_never_reach_ui() -> None:
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
+    raw_responses = iter(
+        [
+            httpx.Response(200, json={"choices": [{"message": {"content": '```json\n{"name":"action"}\n```'}}]}),
+            httpx.Response(200, json={"choices": [{"message": {"content": '{"name":"action"}'}}]}),
+        ]
+    )
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(lambda _request: next(raw_responses))),
+    )
+    with pytest.raises(LLMError, match="serializou uma tool call"):
+        llm.chat("faça", registry)
+
+
+def test_context_budget_trims_only_old_complete_turns() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    config = replace(load_config().llm, context_size=620, max_tokens=50)
+    llm = LLMClient(config, httpx.Client(transport=httpx.MockTransport(handler)))
+    history = [
+        {"role": "user", "content": "a" * 30},
+        {"role": "assistant", "content": "b" * 30},
+        {"role": "user", "content": "c" * 30},
+        {"role": "assistant", "content": "d" * 30},
+        {"role": "user", "content": "e" * 30},
+        {"role": "assistant", "content": "f" * 30},
+    ]
+    assert llm.chat("oi", ToolRegistry(), history=history) == "ok"
+    assert [message["content"] for message in requests[0]["messages"][1:-1]] == [
+        "c" * 30,
+        "d" * 30,
+        "e" * 30,
+        "f" * 30,
+    ]
+
+
+def test_current_message_over_budget_fails_before_http_request() -> None:
+    llm = client(httpx.Response(200, json={"choices": [{"message": {"content": "não deveria"}}]}))
+    with pytest.raises(LLMError, match="excede o limite de contexto"):
+        llm.chat("x" * (1024 * 3 + 1), ToolRegistry())
+
+
 def test_json_with_unknown_or_extra_fields_is_not_executed() -> None:
     calls = []
     registry = ToolRegistry()

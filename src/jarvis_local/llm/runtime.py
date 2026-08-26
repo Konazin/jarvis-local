@@ -297,6 +297,8 @@ class LLMRuntimeManager:
 
     def _start_process(self) -> None:
         binary = self._resolve_binary()
+        self._join_log_thread()
+        self.log_tail.clear()
         self._invalidate_capabilities()
         log.info("llama-server starting")
         try:
@@ -324,7 +326,8 @@ class LLMRuntimeManager:
         def read_logs() -> None:
             try:
                 for line in process.stdout:
-                    self.log_tail.append(line.rstrip())
+                    if process is self.process:
+                        self.log_tail.append(line.rstrip())
             except (OSError, ValueError):
                 pass
 

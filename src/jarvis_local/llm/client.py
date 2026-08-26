@@ -1,11 +1,13 @@
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 import httpx
 
+from jarvis_local.llm.session import estimate_tokens
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 
@@ -22,6 +24,8 @@ _FRESHNESS_RETRY_PROMPT = (
 )
 MAX_TOOL_CALLS_PER_ROUND = 4
 MAX_TOOL_CALLS_TOTAL = 8
+MAX_USER_ESTIMATED_TOKENS = 1024
+CONTEXT_SAFETY_MARGIN_TOKENS = 64
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
 Responda em português brasileiro de forma curta e natural.
@@ -111,14 +115,12 @@ class LLMClient:
         requirement = self.tool_policy.evaluate(text)
         freshness_retry_used = False
         freshness_satisfied = not requirement.required
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._system_prompt()},
-            *self._copy_history(history),
-            {"role": "user", "content": text},
-        ]
+        copied_history = self._copy_history(history)
+        messages = self._prepare_messages(text, registry, copied_history, requirement)
         try:
             for _ in range(4):
                 request_count += 1
+                self._validate_context_budget(messages, registry, requirement, freshness_satisfied)
                 response = self.client.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
                     json=self._request_payload(messages, registry, requirement, freshness_satisfied),
@@ -245,6 +247,69 @@ class LLMClient:
             copied.append({"role": role, "content": content})
         return copied
 
+    def _prepare_messages(
+        self,
+        text: str,
+        registry: ToolRegistry,
+        history: list[dict[str, str]],
+        requirement: ToolRequirement,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(text, str):
+            raise LLMError("mensagem atual invalida")
+        current_tokens = estimate_tokens(text)
+        if current_tokens > MAX_USER_ESTIMATED_TOKENS:
+            raise LLMError("mensagem atual excede o limite de contexto local")
+        system = self._system_prompt()
+        try:
+            schemas = registry.schemas(requirement.allowed_tools if requirement.required else None)
+        except KeyError as exc:
+            raise LLMError(f"tool de contexto não registrada: {exc.args[0]}") from exc
+        fixed_tokens = (
+            estimate_tokens(system)
+            + current_tokens
+            + estimate_tokens(json.dumps(schemas, ensure_ascii=False))
+            + self.config.max_tokens
+            + CONTEXT_SAFETY_MARGIN_TOKENS
+        )
+        if fixed_tokens > self.config.context_size:
+            raise LLMError("mensagem atual excede o limite de contexto local")
+        history_budget = self.config.context_size - fixed_tokens
+        trimmed_history = self._trim_history(history, history_budget)
+        return [{"role": "system", "content": system}, *trimmed_history, {"role": "user", "content": text}]
+
+    @staticmethod
+    def _trim_history(history: list[dict[str, str]], budget: int) -> list[dict[str, str]]:
+        trimmed = list(history)
+        while len(trimmed) > 1 and sum(estimate_tokens(item["content"]) for item in trimmed) > budget:
+            del trimmed[:2]
+        return trimmed
+
+    def _validate_context_budget(
+        self,
+        messages: list[dict[str, Any]],
+        registry: ToolRegistry,
+        requirement: ToolRequirement,
+        freshness_satisfied: bool,
+    ) -> None:
+        schemas = registry.schemas(
+            requirement.allowed_tools if requirement.required and not freshness_satisfied else None
+        )
+        message_tokens = sum(
+            estimate_tokens(message["content"])
+            if isinstance(message.get("content"), str)
+            else estimate_tokens(json.dumps(message, ensure_ascii=False))
+            for message in messages
+            if isinstance(message, dict)
+        )
+        total = (
+            message_tokens
+            + estimate_tokens(json.dumps(schemas, ensure_ascii=False))
+            + self.config.max_tokens
+            + CONTEXT_SAFETY_MARGIN_TOKENS
+        )
+        if total > self.config.context_size:
+            raise LLMError("turno excede o limite de contexto local")
+
     def _request_payload(
         self,
         messages: list[dict[str, Any]],
@@ -280,20 +345,46 @@ class LLMClient:
 
     @staticmethod
     def _raw_tool_name(content: str, registry: ToolRegistry) -> str | None:
+        candidate = content.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, re.IGNORECASE | re.DOTALL)
+        if fenced:
+            candidate = fenced.group(1).strip()
+        tagged = re.fullmatch(r"<tool_call>\s*(.*?)\s*</tool_call>", candidate, re.IGNORECASE | re.DOTALL)
+        if tagged:
+            candidate = tagged.group(1).strip()
         try:
-            parsed = json.loads(content)
+            parsed = json.loads(candidate)
         except (TypeError, ValueError, json.JSONDecodeError):
-            return None
-        if not isinstance(parsed, dict) or set(parsed) != {"name", "arguments"}:
-            return None
-        name, arguments = parsed["name"], parsed["arguments"]
-        if not isinstance(name, str) or not isinstance(arguments, dict):
-            return None
-        try:
-            registry.get(name)
-        except KeyError:
-            return None
-        return name
+            parsed = None
+        if isinstance(parsed, dict):
+            name = parsed.get("name")
+            if isinstance(name, str) and "arguments" in parsed:
+                try:
+                    registry.get(name)
+                except KeyError:
+                    return None
+                return name
+            calls = parsed.get("tool_calls")
+            if isinstance(calls, list):
+                for call in calls:
+                    if isinstance(call, dict) and isinstance(call.get("function"), dict):
+                        name = call["function"].get("name")
+                        if isinstance(name, str):
+                            try:
+                                registry.get(name)
+                            except KeyError:
+                                continue
+                            return name
+        match = re.search(r'"name"\s*:\s*"([^"\\]+)"', candidate)
+        if match:
+            name = match.group(1)
+            try:
+                registry.get(name)
+            except KeyError:
+                return None
+            if "arguments" in candidate or candidate.startswith(("{", "<tool_call>")):
+                return name
+        return None
 
     @staticmethod
     def _accumulate_metrics(

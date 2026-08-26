@@ -43,13 +43,35 @@ def _process_iter(process_iter: Callable[..., Any] | None) -> Callable[..., Any]
     return psutil.process_iter if process_iter is None else process_iter
 
 
+def _normalized_process_names(info: dict[str, Any]) -> set[str]:
+    names: set[str] = set()
+    for value in (info.get("name"), info.get("exe")):
+        if isinstance(value, str) and value.strip():
+            name = value.replace("\\", "/").rsplit("/", 1)[-1].strip().casefold()
+            names.add(name)
+            if name.endswith(".exe"):
+                names.add(name[:-4])
+    command = info.get("cmdline")
+    if isinstance(command, (list, tuple)) and command and isinstance(command[0], str):
+        executable = command[0].strip()
+        if executable:
+            name = executable.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+            names.add(name)
+            if name.endswith(".exe"):
+                names.add(name[:-4])
+    return names
+
+
+def _matches_process(info: dict[str, Any], expected_names: set[str]) -> bool:
+    return bool(_normalized_process_names(info) & expected_names)
+
+
 def _processes_for(process_names: tuple[str, ...], process_iter: Callable[..., Any]) -> list[Any]:
-    expected_names = set(process_names)
+    expected_names = {name.strip().casefold() for name in process_names}
     matches = []
-    for process in process_iter(["pid", "name"]):
+    for process in process_iter(["pid", "name", "exe", "cmdline"]):
         try:
-            name = process.info.get("name")
-            if isinstance(name, str) and name.strip().casefold() in expected_names:
+            if _matches_process(process.info, expected_names):
                 matches.append(process)
         except _PROCESS_ERRORS:
             continue
@@ -63,12 +85,16 @@ def list_running_applications(
     names_to_aliases: dict[str, list[str]] = {}
     for alias in catalog.aliases():
         for process_name in catalog.resolve(alias).process_names:
-            names_to_aliases.setdefault(process_name, []).append(alias)
-    for process in _process_iter(process_iter)(["pid", "name"]):
+            normalized = process_name.strip().casefold()
+            names_to_aliases.setdefault(normalized, []).append(alias)
+            if normalized.endswith(".exe"):
+                names_to_aliases.setdefault(normalized[:-4], []).append(alias)
+    for process in _process_iter(process_iter)(["pid", "name", "exe", "cmdline"]):
         try:
-            name = process.info.get("name")
-            normalized_name = name.strip().casefold() if isinstance(name, str) else ""
-            for alias in names_to_aliases.get(normalized_name, ()):
+            aliases = set()
+            for name in _normalized_process_names(process.info):
+                aliases.update(names_to_aliases.get(name, ()))
+            for alias in aliases:
                 counts[alias] += 1
         except _PROCESS_ERRORS:
             continue

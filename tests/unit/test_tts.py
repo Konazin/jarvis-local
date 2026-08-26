@@ -90,6 +90,20 @@ def test_close_is_idempotent_and_cancels_timer():
     assert tts.state == TTSState.COLD
 
 
+def test_close_is_terminal_for_all_load_paths():
+    tts = manager()
+    tts._process = FakeProcess()
+    tts._socket = FakeSocket()
+    tts.state = TTSState.READY
+    tts.close()
+    with pytest.raises(RuntimeError, match="já foi fechado"):
+        tts.ensure_loaded()
+    with pytest.raises(RuntimeError, match="já foi fechado"):
+        tts.preload_async()
+    with pytest.raises(RuntimeError, match="já foi fechado"):
+        tts.speak("olá")
+
+
 def test_only_one_ttl_timer():
     tts = manager(mode="balanced", keep_alive_seconds=60)
     first = SimpleNamespace(cancel=lambda: setattr(first, "cancelled", True))

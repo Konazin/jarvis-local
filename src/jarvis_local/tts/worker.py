@@ -49,7 +49,17 @@ def main() -> None:
 
                     chunks = [audio.numpy() for _, _, audio in pipeline(payload.decode(), voice=voice, speed=speed)]
                     audio = np.concatenate(chunks).astype(np.float32, copy=False)
-                    send(connection, {"status": "audio", "sample_rate": 24000, "dtype": "float32"}, audio.tobytes())
+                    send(
+                        connection,
+                        {
+                            "status": "audio",
+                            "sample_rate": 24000,
+                            "dtype": "float32",
+                            "audio_samples": int(audio.size),
+                            "audio_duration_ms": float(audio.size * 1000 / 24000),
+                        },
+                        audio.tobytes(),
+                    )
                 elif command == "STOP":
                     send(connection, {"status": "stopped"})
                     return

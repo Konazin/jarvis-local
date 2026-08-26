@@ -16,7 +16,13 @@ def normalizer() -> SpeechNormalizer:
         ("680 MB", "680 megabytes"),
         ("63%", "63 por cento"),
         ("68 °C", "68 graus Celsius"),
+        ("1 MB", "1 megabyte"),
+        ("2 MB", "2 megabytes"),
+        ("1 %", "1 por cento"),
+        ("1 hora", "1 hora"),
         ("10 horas", "10 horas"),
+        ("-1,2 GB", "menos 1 vírgula 2 gigabytes"),
+        ("-1 °C", "menos 1 grau Celsius"),
     ],
 )
 def test_speech_units_are_pronounceable(normalizer, visual, speech) -> None:

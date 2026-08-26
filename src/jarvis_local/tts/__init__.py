@@ -1,3 +1,3 @@
-from .manager import TTSManager, TTSState
+from .manager import TTSLastMetrics, TTSManager, TTSState
 
-__all__ = ["TTSManager", "TTSState"]
+__all__ = ["TTSLastMetrics", "TTSManager", "TTSState"]

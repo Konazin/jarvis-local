@@ -1,47 +1,54 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 
 _PROTECTED = re.compile(r"```[\s\S]*?```|`[^`\n]*`|https?://[^\s<>]+", re.IGNORECASE)
 _NUMBER_WITH_UNIT = re.compile(
-    r"(?<![\w.])(?P<number>\d+(?:[.,]\d+)?)[ \t]*(?P<unit>%|°\s?[CF]|(?:KB|MB|GB|TB|B)\b|"
+    r"(?<![\w.])(?P<number>[+-]?\d+(?:[.,]\d+)?)[ \t]*(?P<unit>%|°\s?[CF]|(?:KB|MB|GB|TB|B)\b|"
     r"(?:segundos?|minutos?|horas?|seg|min|h)\b)",
     re.IGNORECASE,
 )
 _UNIT_SPEECH = {
-    "%": "por cento",
-    "B": "bytes",
-    "KB": "quilobytes",
-    "MB": "megabytes",
-    "GB": "gigabytes",
-    "TB": "terabytes",
-    "°C": "graus Celsius",
-    "°F": "graus Fahrenheit",
-    "s": "segundos",
-    "seg": "segundos",
-    "min": "minutos",
-    "h": "horas",
+    "%": ("por cento", "por cento"),
+    "B": ("byte", "bytes"),
+    "KB": ("quilobyte", "quilobytes"),
+    "MB": ("megabyte", "megabytes"),
+    "GB": ("gigabyte", "gigabytes"),
+    "TB": ("terabyte", "terabytes"),
+    "°C": ("grau Celsius", "graus Celsius"),
+    "°F": ("grau Fahrenheit", "graus Fahrenheit"),
+    "S": ("segundo", "segundos"),
+    "SEG": ("segundo", "segundos"),
+    "SEGUNDO": ("segundo", "segundos"),
+    "SEGUNDOS": ("segundo", "segundos"),
+    "MIN": ("minuto", "minutos"),
+    "MINUTO": ("minuto", "minutos"),
+    "MINUTOS": ("minuto", "minutos"),
+    "H": ("hora", "horas"),
+    "HORA": ("hora", "horas"),
+    "HORAS": ("hora", "horas"),
 }
 
 
-def _unit_speech(unit: str) -> str:
+def _unit_speech(unit: str, number: str) -> str:
     normalized = unit.replace(" ", "").upper()
-    if normalized in {"°C", "°F"}:
-        return _UNIT_SPEECH[normalized]
-    normalized = normalized.lower()
-    if normalized in {"segundo", "segundos"}:
-        return "segundos"
-    if normalized in {"minuto", "minutos"}:
-        return "minutos"
-    if normalized in {"hora", "horas"}:
-        return "horas"
-    return _UNIT_SPEECH.get(normalized.upper(), unit)
+    singular, plural = _UNIT_SPEECH.get(normalized, (unit, unit))
+    try:
+        value = Decimal(number.replace(",", "."))
+    except InvalidOperation:
+        return plural
+    return singular if abs(value) == 1 else plural
 
 
 def _normalize_segment(segment: str) -> str:
     def replace(match: re.Match[str]) -> str:
-        number = match.group("number").replace(",", " vírgula ").replace(".", " vírgula ")
-        return f"{number} {_unit_speech(match.group('unit'))}"
+        raw_number = match.group("number")
+        negative = raw_number.startswith("-")
+        unsigned = raw_number.lstrip("+-")
+        number = unsigned.replace(",", " vírgula ").replace(".", " vírgula ")
+        spoken_number = f"menos {number}" if negative else number
+        return f"{spoken_number} {_unit_speech(match.group('unit'), raw_number)}"
 
     return _NUMBER_WITH_UNIT.sub(replace, segment)
 

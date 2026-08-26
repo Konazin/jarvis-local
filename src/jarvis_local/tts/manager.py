@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Callable
@@ -25,6 +26,14 @@ class TTSState(StrEnum):
     SPEAKING = "SPEAKING"
 
 
+@dataclass(frozen=True)
+class TTSLastMetrics:
+    synthesis_ms: float | None = None
+    playback_ms: float | None = None
+    audio_duration_ms: float | None = None
+    cold_start_ms: float | None = None
+
+
 class TTSManager:
     _MEMORY_CHECK_INTERVAL_SECONDS = 5.0
 
@@ -39,13 +48,22 @@ class TTSManager:
         self._timer = None
         self._maintenance_stop = threading.Event()
         self._maintenance_thread: threading.Thread | None = None
+        self._stderr_thread: threading.Thread | None = None
         self._last_used = time.monotonic()
+        self._last_metrics: TTSLastMetrics | None = None
+        self._closed = False
         self.muted = False
         self._popen = popen or subprocess.Popen
         self._memory = memory or psutil.virtual_memory
 
+    @property
+    def last_metrics(self) -> TTSLastMetrics | None:
+        return self._last_metrics
+
     def ensure_loaded(self) -> None:
         with self._lock:
+            if self._closed:
+                raise RuntimeError("TTS manager já foi fechado")
             if self.state in (TTSState.LOADING, TTSState.READY):
                 return
             self.state = TTSState.LOADING
@@ -65,8 +83,11 @@ class TTSManager:
             log.info("TTS worker ready")
 
     def preload_async(self) -> threading.Thread | None:
-        if self.muted:
-            return None
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("TTS manager já foi fechado")
+            if self.muted or self.state in (TTSState.LOADING, TTSState.READY):
+                return None
 
         def run() -> None:
             log.info("TTS preload started")
@@ -75,9 +96,6 @@ class TTSManager:
             except Exception:
                 log.exception("TTS preload failed")
 
-        with self._lock:
-            if self.state in (TTSState.LOADING, TTSState.READY):
-                return None
         thread = threading.Thread(target=run, name="yuki-tts-preload", daemon=True)
         thread.start()
         return thread
@@ -111,7 +129,10 @@ class TTSManager:
             self._cleanup_locked()
             raise
         if self._process.stderr is not None:
-            threading.Thread(target=self._drain_stderr, args=(self._process.stderr,), daemon=True).start()
+            self._stderr_thread = threading.Thread(
+                target=self._drain_stderr, args=(self._process.stderr,), name="yuki-tts-stderr", daemon=True
+            )
+            self._stderr_thread.start()
         self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
@@ -130,21 +151,35 @@ class TTSManager:
     @staticmethod
     def _drain_stderr(stream) -> None:
         for line in iter(stream.readline, b""):
-            log.debug("kokoro: %s", line.decode(errors="replace").rstrip())
+            text = line.decode(errors="replace") if isinstance(line, bytes) else str(line)
+            log.debug("kokoro: %s", text.rstrip())
 
     def speak(self, text: str) -> None:
-        if self.muted:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("TTS manager já foi fechado")
+            muted = self.muted
+            cold_start = self.state == TTSState.COLD
+        if muted:
             return
+        load_started = time.perf_counter()
         self.ensure_loaded()
+        cold_start_ms = (time.perf_counter() - load_started) * 1000 if cold_start else None
         with self._lock:
             if self.state != TTSState.READY:
                 raise RuntimeError("TTS não está pronto")
             self.state = TTSState.SPEAKING
-        log.info("TTS speaking")
         try:
+            synthesis_started = time.perf_counter()
+            log.info("TTS synthesis started")
             header, payload = self._request("SPEAK", text.encode())
             if header.get("status") != "audio":
                 raise RuntimeError(header.get("error", "worker Kokoro não retornou áudio"))
+            synthesis_ms = (time.perf_counter() - synthesis_started) * 1000
+            log.info("TTS synthesis finished")
+            log.debug("TTS synthesis timing synthesis_ms=%.2f", synthesis_ms)
+            playback_started = time.perf_counter()
+            log.info("TTS playback started")
             import sounddevice as sd
 
             with sd.RawOutputStream(
@@ -154,15 +189,39 @@ class TTSManager:
                 device=None if self.audio_device == "default" else self.audio_device,
             ) as stream:
                 stream.write(payload)
+            playback_ms = (time.perf_counter() - playback_started) * 1000
+            log.info("TTS playback finished")
+            log.debug("TTS playback timing playback_ms=%.2f", playback_ms)
+            audio_duration_ms = header.get("audio_duration_ms")
+            if not isinstance(audio_duration_ms, (int, float)):
+                samples = header.get("audio_samples")
+                sample_rate = header.get("sample_rate")
+                if isinstance(samples, int) and isinstance(sample_rate, (int, float)) and sample_rate > 0:
+                    audio_duration_ms = samples * 1000 / sample_rate
             with self._lock:
+                closed = self._closed
+                self._last_metrics = TTSLastMetrics(
+                    synthesis_ms=synthesis_ms,
+                    playback_ms=playback_ms,
+                    audio_duration_ms=(
+                        float(audio_duration_ms) if isinstance(audio_duration_ms, (int, float)) else None
+                    ),
+                    cold_start_ms=cold_start_ms,
+                )
                 self._last_used = time.monotonic()
-                self.state = TTSState.READY
-                self._arm_ttl()
-            log.info("TTS finished")
+                self.state = TTSState.COLD if closed else TTSState.READY
+                if not closed:
+                    self._arm_ttl()
+            if closed:
+                raise RuntimeError("TTS manager foi fechado durante a fala")
             self.check_memory_pressure()
         except Exception:
             with self._lock:
-                self.state = TTSState.READY if self._process and self._process.poll() is None else TTSState.COLD
+                self.state = (
+                    TTSState.COLD
+                    if self._closed or not self._process or self._process.poll() is not None
+                    else TTSState.READY
+                )
             raise
 
     def speak_async(
@@ -171,10 +230,14 @@ class TTSManager:
         on_done: Callable[[], None] | None = None,
         on_error: Callable[[Exception], None] | None = None,
     ) -> threading.Thread:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("TTS manager já foi fechado")
+
         def run() -> None:
             try:
                 self.speak(text)
-                if on_done:
+                if on_done and not self._is_closed():
                     on_done()
             except Exception as exc:
                 log.exception("TTS failed")
@@ -184,6 +247,10 @@ class TTSManager:
         thread = threading.Thread(target=run, name="yuki-tts", daemon=True)
         thread.start()
         return thread
+
+    def _is_closed(self) -> bool:
+        with self._lock:
+            return self._closed
 
     def check_memory_pressure(self) -> bool:
         with self._lock:
@@ -272,14 +339,12 @@ class TTSManager:
                 self._request("STOP")
             except Exception:
                 pass
-            self._socket.close()
-        if self._process:
-            self._process.terminate()
             try:
-                self._process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-                self._process.wait()
+                self._socket.close()
+            except Exception:
+                pass
+        self._terminate_process_locked()
+        self._join_stderr_thread()
         self._cleanup_tempdir()
         self._socket = self._process = None
         self.state = TTSState.COLD
@@ -291,18 +356,49 @@ class TTSManager:
 
     def _cleanup_locked(self) -> None:
         if self._socket:
-            self._socket.close()
-        if self._process:
-            self._process.terminate()
             try:
-                self._process.wait(timeout=2)
+                self._socket.close()
             except Exception:
-                self._process.kill()
+                pass
+        self._terminate_process_locked()
+        self._join_stderr_thread()
         self._cleanup_tempdir()
         self._socket = self._process = None
 
+    def _terminate_process_locked(self) -> None:
+        if not self._process:
+            return
+        try:
+            self._process.terminate()
+        except Exception:
+            pass
+        try:
+            self._process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self._kill_and_reap_locked()
+        except Exception:
+            self._kill_and_reap_locked()
+
+    def _kill_and_reap_locked(self) -> None:
+        try:
+            self._process.kill()
+        except Exception:
+            pass
+        try:
+            self._process.wait()
+        except Exception:
+            pass
+
+    def _join_stderr_thread(self) -> None:
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(timeout=1)
+            self._stderr_thread = None
+
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             self._maintenance_stop.set()
             maintenance = self._maintenance_thread
             self._maintenance_thread = None

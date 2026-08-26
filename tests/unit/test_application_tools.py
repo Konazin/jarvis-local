@@ -32,8 +32,8 @@ def lifecycle_catalog() -> ApplicationCatalog:
 
 
 class FakeProcess:
-    def __init__(self, name, error=None, terminate_error=None):
-        self.info = {"pid": id(self), "name": name}
+    def __init__(self, name, error=None, terminate_error=None, **fields):
+        self.info = {"pid": id(self), "name": name, **fields}
         self.error = error
         self.terminate_error = terminate_error
         self.terminate_calls = 0
@@ -234,6 +234,13 @@ def test_running_application_listing_is_safe_exact_and_private() -> None:
     }
     rendered = str(tool.execute())
     assert not any(value in rendered for value in ("pid", "process_names", "cmdline"))
+
+
+def test_running_listing_matches_executable_without_exposing_process_details() -> None:
+    process = FakeProcess("python", exe="/opt/Discord/Discord.exe", cmdline=["/opt/Discord/Discord.exe"])
+    result = applications.list_running_applications(lifecycle_catalog(), lambda _: [process])
+    assert result["applications"][0]["instances"] == 1
+    assert "Discord.exe" not in str(result)
 
 
 def test_running_listing_ignores_process_access_races() -> None:

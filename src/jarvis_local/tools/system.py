@@ -53,8 +53,9 @@ def _process_record(info: dict[str, Any], include_memory_percent: bool = False) 
 
 
 def get_system_status() -> dict[str, int | float]:
-    """Return the current CPU and memory usage without blocking for a sample."""
+    """Return the current CPU and memory usage with a short valid CPU sample."""
     memory = psutil.virtual_memory()
+    psutil.cpu_percent(interval=0.05)
     return {
         "cpu_percent": psutil.cpu_percent(interval=None),
         "memory_percent": memory.percent,

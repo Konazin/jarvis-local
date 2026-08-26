@@ -9,7 +9,7 @@ _PRECISION = re.compile(
 )
 _PROTECTED = re.compile(r"```[\s\S]*?```|`[^`\n]*`|https?://[^\s<>]+", re.IGNORECASE)
 _NUMBER_WITH_UNIT = re.compile(
-    r"(?<![\w.])(?P<number>\d+(?:[.,]\d+)?)[ \t]*(?P<unit>%|°\s?[CF]|(?:KB|MB|GB|TB|B)\b|"
+    r"(?<![\w.])(?P<number>[+-]?\d+(?:[.,]\d+)?)[ \t]*(?P<unit>%|°\s?[CF]|(?:KB|MB|GB|TB|B)\b|"
     r"(?:segundos?|minutos?|horas?|seg|min|h)\b)",
     re.IGNORECASE,
 )
@@ -26,7 +26,8 @@ def _decimal(value: str) -> Decimal:
 
 
 def _rounded(value: Decimal, percent: bool) -> Decimal:
-    if percent or value >= 10:
+    magnitude = abs(value)
+    if percent or value >= 10 or (value < 0 and magnitude >= 5):
         quantum = Decimal("1")
     else:
         quantum = Decimal("0.1")
@@ -55,11 +56,8 @@ def _normalize_segment(segment: str) -> str:
         if rounded == value and "." not in raw_number and "," not in raw_number:
             return match.group(0)
         prefix = segment[: match.start()]
-        approximation = (
-            ""
-            if re.search(r"(?:cerca de|aproximadamente|quase)\s*$", prefix, re.IGNORECASE)
-            else "cerca de "
-        )
+        has_approximation = re.search(r"(?:cerca de|aproximadamente|quase)\s*$", prefix, re.IGNORECASE)
+        approximation = "" if has_approximation else "cerca de "
         unit = match.group("unit").strip()
         separator = "" if unit == "%" else " "
         return f"{approximation}{_format_decimal(rounded)}{separator}{unit}"

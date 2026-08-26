@@ -293,6 +293,17 @@ def test_managed_starts_when_offline_and_waits_for_503_then_ready(monkeypatch) -
     assert popen.call_args.args[0][0] == "/usr/bin/llama-server"
 
 
+def test_new_managed_process_does_not_inherit_previous_log_tail(monkeypatch) -> None:
+    server = process()
+    monkeypatch.setattr(runtime_module.shutil, "which", lambda _binary: "/usr/bin/llama-server")
+    monkeypatch.setattr(runtime_module.subprocess, "Popen", lambda *_args, **_kwargs: server)
+    manager = LLMRuntimeManager(config(runtime_mode="managed"), RuntimeClient())
+    manager.log_tail.append("process A failure")
+    manager._start_process()
+    assert list(manager.log_tail) == []
+    manager.close()
+
+
 def test_process_death_during_startup_and_timeout_clean_up(monkeypatch) -> None:
     dead_server = process(poll=1)
     monkeypatch.setattr(runtime_module.shutil, "which", lambda _binary: "/usr/bin/llama-server")

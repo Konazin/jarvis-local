@@ -14,6 +14,10 @@ def naturalizer() -> ResponseNaturalizer:
         ("677.72 MB", "cerca de 680 MB"),
         ("94.84 GB", "cerca de 95 GB"),
         ("63.27%", "cerca de 63%"),
+        ("-5.4 °C", "cerca de -5 °C"),
+        ("-12.37 GB", "cerca de -12 GB"),
+        ("-0.8 GB", "cerca de -0,8 GB"),
+        ("-63.27%", "cerca de -63%"),
         ("4.37 GB", "cerca de 4,4 GB"),
         ("1.23 GB", "cerca de 1,2 GB"),
     ],
@@ -25,6 +29,7 @@ def test_technical_numbers_are_naturalized(naturalizer, raw, expected) -> None:
 def test_explicit_precision_is_preserved(naturalizer) -> None:
     assert naturalizer.normalize("quanto exatamente?", "677.72 MB") == "677.72 MB"
     assert naturalizer.normalize("qual o valor preciso?", "63,27%") == "63,27%"
+    assert naturalizer.normalize("valor exato", "-5.4 °C") == "-5.4 °C"
 
 
 @pytest.mark.parametrize(

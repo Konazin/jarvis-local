@@ -36,7 +36,8 @@ def process(pid, name, rss, memory_percent=None):
 
 
 def test_system_status_has_serializable_current_usage(monkeypatch) -> None:
-    monkeypatch.setattr(system.psutil, "cpu_percent", lambda interval: 12.5)
+    intervals = []
+    monkeypatch.setattr(system.psutil, "cpu_percent", lambda interval: intervals.append(interval) or 12.5)
     monkeypatch.setattr(
         system.psutil,
         "virtual_memory",
@@ -47,6 +48,7 @@ def test_system_status_has_serializable_current_usage(monkeypatch) -> None:
 
     assert {"cpu_percent", "memory_percent", "memory_used", "memory_total", "memory_available"} <= set(result)
     assert result["memory_used_gb"] == 2.0
+    assert intervals == [0.05, None]
     json.dumps(result)
 
 
