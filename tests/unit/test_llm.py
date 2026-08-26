@@ -32,7 +32,102 @@ def test_normal_response_sends_non_thinking_controls() -> None:
     assert [message["role"] for message in payload["messages"]] == ["system", "user"]
     assert "/no_think" in payload["messages"][0]["content"]
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
-    assert payload["reasoning_effort"] == "none"
+    assert "reasoning_effort" not in payload
+
+
+def test_reasoning_effort_is_sent_only_when_runtime_supports_it() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    capabilities = SimpleNamespace(supports_reasoning_effort=True)
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        capabilities_provider=lambda: capabilities,
+    )
+    llm.chat("oi", ToolRegistry())
+    assert json.loads(requests[0].content)["reasoning_effort"] == "none"
+
+
+def test_raw_registered_tool_call_is_retried_without_execution() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append(True)))
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": '{"name":"action","arguments":{}}'}}]},
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "resposta normal"}}]}),
+        ]
+    )
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat("faça", registry) == "resposta normal"
+    assert calls == []
+    assert requests[1]["messages"][-1]["role"] == "user"
+    assert "mecanismo oficial" in requests[1]["messages"][-1]["content"]
+
+
+def test_two_raw_registered_tool_calls_fail_without_execution() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append(True)))
+    raw = '{"name":"action","arguments":{}}'
+    responses = iter(
+        [
+            httpx.Response(200, json={"choices": [{"message": {"content": raw}}]}),
+            httpx.Response(200, json={"choices": [{"message": {"content": raw}}]}),
+        ]
+    )
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))),
+    )
+    with pytest.raises(LLMError, match="serializou uma tool call"):
+        llm.chat("faça", registry)
+    assert calls == []
+
+
+def test_json_with_unknown_or_extra_fields_is_not_executed() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.CONFIRM, lambda: calls.append(True)))
+    content = '{"name":"missing","arguments":{},"extra":true}'
+    llm = client(httpx.Response(200, json={"choices": [{"message": {"content": content}}]}))
+    assert llm.chat("faça", registry) == content
+    assert calls == []
+
+
+def test_malformed_official_tool_call_is_structured_without_execution() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append(True)))
+    responses = iter(
+        [
+            httpx.Response(200, json={"choices": [{"message": {"tool_calls": [{"function": None}]}}]}),
+            httpx.Response(200, json={"choices": [{"message": {"content": "recuperado"}}]}),
+        ]
+    )
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat("faça", registry) == "recuperado"
+    assert calls == []
+    assert json.loads(requests[1]["messages"][-1]["content"])["error"] == "tool call malformada"
 
 
 def test_thinking_enabled_does_not_send_non_thinking_controls() -> None:

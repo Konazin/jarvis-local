@@ -44,6 +44,10 @@ Os aplicativos que a Yuki pode abrir precisam ser cadastrados na seção `[appli
 
 A Yuki também lista aplicativos configurados em execução e pode solicitar seu fechamento, sempre com confirmação. O fechamento compara nomes de processo exatos definidos em `process_names`; não há encerramento arbitrário por PID, shell ou comando externo.
 
+### Resposta e voz
+
+Respostas técnicas são humanizadas de forma determinística depois do LLM; valores exatos permanecem preservados quando solicitados. O texto visual é salvo na sessão, enquanto o TTS recebe uma versão própria, com decimais e unidades escritos para fala. O Kokoro permanece residente normalmente, faz preload em background e pode ser descarregado sob pressão de memória.
+
 ### Contexto da sessão
 
 O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.

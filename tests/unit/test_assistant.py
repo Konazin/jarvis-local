@@ -53,9 +53,21 @@ def test_text_is_returned_without_waiting_for_tts() -> None:
     assistant = Assistant(FakeLLM(), object(), tts, states.append)
     answer = assistant.ask("status")
     assert answer == "Você está usando 8 GB de RAM."
-    assert tts.text == answer
+    assert tts.text == "Você está usando 8 gigabytes de RAM."
     assert assistant.state.current == State.SPEAKING
     assert states == ["THINKING", "SPEAKING"]
+
+
+def test_visual_response_is_naturalized_and_tts_gets_speech_text() -> None:
+    class NumericLLM:
+        def chat(self, text, tools, history=None):
+            return "Você está usando 677.72 MB."
+
+    tts, session = FakeTTS(), conversation()
+    assistant = Assistant(NumericLLM(), object(), tts, session=session)
+    assert assistant.ask("status") == "Você está usando cerca de 680 MB."
+    assert tts.text == "Você está usando cerca de 680 megabytes."
+    assert session.snapshot().messages[-1].content == "Você está usando cerca de 680 MB."
 
 
 def test_runtime_is_ready_before_llm_chat() -> None:

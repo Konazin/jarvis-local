@@ -27,7 +27,7 @@ def main() -> None:
     for tool in SYSTEM_TOOLS:
         tools.register(tool)
     catalog = ApplicationCatalog(
-        ApplicationDefinition(alias, application.name, application.command)
+        ApplicationDefinition(alias, application.name, application.command, application.process_names)
         for alias, application in config.applications.items()
     )
     for tool in build_application_tools(catalog):
@@ -36,8 +36,8 @@ def main() -> None:
     app.setQuitOnLastWindowClosed(False)
     confirmation = ConfirmationBridge()
     executor = ToolExecutor(tools, approval_handler=confirmation.request)
-    llm = LLMClient(config.llm, tool_executor=executor)
     runtime = LLMRuntimeManager(config.llm)
+    llm = LLMClient(config.llm, tool_executor=executor, capabilities_provider=lambda: runtime.capabilities)
     session = ConversationSession(config.conversation)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)
     assistant = Assistant(llm, tools, tts, runtime=runtime, session=session)
@@ -47,6 +47,7 @@ def main() -> None:
     tray = Tray(window, tts, app.quit)
     tray.show()
     window.show()
+    tts.preload_async()
     try:
         exit_code = app.exec()
     finally:

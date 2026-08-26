@@ -2,7 +2,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import httpx
 
@@ -10,14 +10,35 @@ from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 
 log = logging.getLogger(__name__)
+_RAW_TOOL_RETRY_PROMPT = (
+    "Sua resposta anterior serializou uma chamada de ferramenta como texto. "
+    "Use o mecanismo oficial de tool calling ou responda normalmente."
+)
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
 Responda em português brasileiro de forma curta e natural.
+
 Use as ferramentas disponíveis quando forem necessárias.
 Nunca invente o resultado de uma ferramenta.
+
 Tools SAFE podem executar automaticamente; tools CONFIRM podem exigir autorização do usuário.
-`user_rejected` significa que o usuário negou, e `dangerous_tool` que a política bloqueou a ação.
-Nunca alegue que uma tool executou se o resultado indicar rejeição, bloqueio ou erro."""
+`user_rejected` significa que o usuário negou, e `dangerous_tool` significa que a política bloqueou a ação.
+Nunca alegue que uma tool executou se o resultado indicar rejeição, bloqueio ou erro.
+
+Ao apresentar números, fale como uma pessoa:
+- Por padrão, arredonde valores técnicos quando a precisão não for importante.
+- Nunca use "cerca de" ou "aproximadamente" junto com casas decimais desnecessárias.
+- 677,72 MB deve virar "cerca de 678 MB" ou "cerca de 680 MB".
+- 94,84 GB deve virar "cerca de 95 GB".
+- 63,27% deve virar "cerca de 63%".
+- 10 horas e 14 minutos pode virar "cerca de 10 horas".
+- Preserve casas decimais somente se o usuário pedir valor exato ou se a precisão mudar a conclusão.
+- Nunca invente precisão que a ferramenta não forneceu.
+
+Não execute uma ação apenas porque o usuário mencionou um aplicativo, URL, arquivo ou recurso.
+Quando houver dúvida entre interpretar uma frase como informação ou como comando, trate-a como informação.
+Só use tools de ação quando houver intenção clara de executar a ação.
+"""
 
 
 @dataclass(frozen=True)
@@ -47,6 +68,7 @@ class LLMClient:
         tool_executor: ToolExecutor | None = None,
         on_confirmation_start=None,
         on_confirmation_finish=None,
+        capabilities_provider: Callable[[], Any] | None = None,
     ) -> None:
         self.config = config
         self.client = client or httpx.Client(timeout=config.timeout_seconds)
@@ -55,6 +77,7 @@ class LLMClient:
         self.tool_executor = tool_executor
         self.on_confirmation_start = on_confirmation_start
         self.on_confirmation_finish = on_confirmation_finish
+        self.capabilities_provider = capabilities_provider
         self._last_metrics: LLMCallMetrics | None = None
 
     @property
@@ -73,6 +96,7 @@ class LLMClient:
             "predicted_tokens": None,
         }
         timing_totals: dict[str, float | None] = {"prompt_ms": None, "predicted_ms": None}
+        raw_tool_retry_used = False
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt()},
             *self._copy_history(history),
@@ -89,20 +113,42 @@ class LLMClient:
                 payload = response.json()
                 self._accumulate_metrics(payload, usage_totals, timing_totals)
                 message = payload["choices"][0]["message"]
+                if not isinstance(message, dict):
+                    raise LLMError("resposta do llama-server com message invalida")
                 calls = message.get("tool_calls") or []
+                if calls and not isinstance(calls, list):
+                    raise LLMError("resposta do llama-server com tool_calls invalido")
                 if not calls:
                     content = message.get("content")
                     if not isinstance(content, str):
                         raise LLMError("resposta do llama-server sem conteudo")
+                    if self._raw_tool_name(content, registry) is not None:
+                        if raw_tool_retry_used:
+                            raise LLMError("llama-server serializou uma tool call como texto após retry")
+                        raw_tool_retry_used = True
+                        log.warning("raw tool-call response detected")
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({"role": "user", "content": _RAW_TOOL_RETRY_PROMPT})
+                        log.info("raw tool-call retry")
+                        continue
                     self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
                     return content.strip()
                 tool_call_message = dict(message)
                 tool_call_message.setdefault("role", "assistant")
                 messages.append(tool_call_message)
                 for call in calls:
-                    name = call.get("function", {}).get("name")
+                    call_id = call.get("id", "") if isinstance(call, dict) else ""
                     try:
-                        arguments = json.loads(call.get("function", {}).get("arguments", "{}"))
+                        if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                            raise ValueError("tool call malformada")
+                        function = call["function"]
+                        name = function.get("name")
+                        raw_arguments = function.get("arguments", "{}")
+                        if not isinstance(name, str) or not name:
+                            raise ValueError("nome da tool ausente")
+                        if not isinstance(raw_arguments, str):
+                            raise ValueError("argumentos da tool devem ser JSON")
+                        arguments = json.loads(raw_arguments)
                         if not isinstance(arguments, dict):
                             raise ValueError("argumentos da tool devem ser um objeto")
                         executor = self.tool_executor or ToolExecutor(registry)
@@ -128,7 +174,7 @@ class LLMClient:
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": call.get("id", ""),
+                            "tool_call_id": call_id,
                             "content": serialized_result,
                         }
                     )
@@ -169,8 +215,27 @@ class LLMClient:
         }
         if not self.config.thinking:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
-            payload["reasoning_effort"] = "none"
+            capabilities = self.capabilities_provider() if self.capabilities_provider else None
+            if getattr(capabilities, "supports_reasoning_effort", False) is True:
+                payload["reasoning_effort"] = "none"
         return payload
+
+    @staticmethod
+    def _raw_tool_name(content: str, registry: ToolRegistry) -> str | None:
+        try:
+            parsed = json.loads(content)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(parsed, dict) or set(parsed) != {"name", "arguments"}:
+            return None
+        name, arguments = parsed["name"], parsed["arguments"]
+        if not isinstance(name, str) or not isinstance(arguments, dict):
+            return None
+        try:
+            registry.get(name)
+        except KeyError:
+            return None
+        return name
 
     @staticmethod
     def _accumulate_metrics(

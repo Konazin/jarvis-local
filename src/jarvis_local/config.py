@@ -47,7 +47,7 @@ class TTSConfig:
     lang_code: str = "p"
     voice: str = "pf_dora"
     speed: float = 1.0
-    mode: str = "balanced"
+    mode: str = "resident"
     keep_alive_seconds: float = 60.0
     python: str = ".venv-kokoro/bin/python"
 

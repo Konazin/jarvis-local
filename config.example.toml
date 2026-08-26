@@ -32,7 +32,7 @@ language = "pt-BR"
 lang_code = "p"
 voice = "pf_dora"
 speed = 1.0
-mode = "balanced"
+mode = "resident"
 keep_alive_seconds = 60
 python = ".venv-kokoro/bin/python"
 

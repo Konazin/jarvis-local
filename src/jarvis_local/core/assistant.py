@@ -2,7 +2,9 @@ import logging
 
 from jarvis_local.llm.client import LLMClient
 from jarvis_local.tools.registry import ToolRegistry
+from jarvis_local.tts.normalizer import SpeechNormalizer
 
+from .response import ResponseNaturalizer
 from .state import State, StateMachine
 
 log = logging.getLogger(__name__)
@@ -13,6 +15,8 @@ class Assistant:
         self, llm: LLMClient, tools: ToolRegistry, tts=None, on_state_change=None, runtime=None, session=None
     ) -> None:
         self.llm, self.tools, self.tts, self.runtime, self.session = llm, tools, tts, runtime, session
+        self.response_naturalizer = ResponseNaturalizer()
+        self.speech_normalizer = SpeechNormalizer()
         self.state = StateMachine()
         self.on_state_change = on_state_change
 
@@ -43,12 +47,12 @@ class Assistant:
             if self.runtime is not None:
                 self.runtime.ensure_ready()
             history = self.session.messages() if self.session is not None else None
-            answer = self.llm.chat(text, self.tools, history=history)
+            answer = self.response_naturalizer.normalize(text, self.llm.chat(text, self.tools, history=history))
             if self.session is not None:
                 self.session.append_turn(text, answer)
             if self.tts is not None:
                 self._transition(State.SPEAKING)
-                self.tts.speak_async(answer, self._tts_done, self._tts_error)
+                self.tts.speak_async(self.speech_normalizer.normalize(answer), self._tts_done, self._tts_error)
             else:
                 self._transition(State.IDLE)
             return answer

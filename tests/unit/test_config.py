@@ -10,6 +10,7 @@ def test_defaults() -> None:
     assert config.llm.require_tool_support
     assert config.conversation.max_turns == 8
     assert config.tts.voice == "pf_dora"
+    assert config.tts.mode == "resident"
 
 
 def test_invalid_config(tmp_path) -> None:
