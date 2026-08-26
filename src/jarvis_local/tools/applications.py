@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
+import os
+import shutil
 import subprocess
 import urllib.parse
 import webbrowser
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import psutil
@@ -15,14 +19,24 @@ from .base import RiskLevel, Tool
 MAX_URL_LENGTH = 2048
 WAIT_TIMEOUT_SECONDS = 3.0
 _PROCESS_ERRORS = (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess)
+log = logging.getLogger(__name__)
 
 
 def list_applications(catalog: ApplicationCatalog) -> dict[str, list[dict[str, str]]]:
     return {"applications": [{"alias": item.alias, "name": item.name} for item in catalog.list()]}
 
 
-def _validate_application(catalog: ApplicationCatalog, application: str) -> None:
-    catalog.resolve(application)
+def _validate_open_application(catalog: ApplicationCatalog, application: str) -> None:
+    definition = catalog.resolve(application)
+    executable = definition.command[0]
+    path = Path(executable)
+    if path.is_absolute():
+        if not path.is_file() or not os.access(path, os.X_OK):
+            log.info("application preflight failed: %s", executable)
+            raise FileNotFoundError(f"executável não encontrado ou não executável: {executable}")
+    elif shutil.which(executable) is None:
+        log.info("application preflight failed: %s", executable)
+        raise FileNotFoundError(f"executável não encontrado no PATH: {executable}")
 
 
 def _process_iter(process_iter: Callable[..., Any] | None) -> Callable[..., Any]:
@@ -190,7 +204,7 @@ def build_application_tools(
                 application_parameters,
                 RiskLevel.CONFIRM,
                 lambda application: _open_application(catalog, launcher, application),
-                validate=lambda application: _validate_application(catalog, application),
+                validate=lambda application: _validate_open_application(catalog, application),
                 confirmation_description=lambda application: (
                     f"A Yuki quer abrir:\n\n{catalog.resolve(application).display_name}"
                 ),

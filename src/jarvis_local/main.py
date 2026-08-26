@@ -1,11 +1,10 @@
 import logging
 import sys
-from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
 from .apps.catalog import ApplicationCatalog, ApplicationDefinition
-from .config import load_config
+from .config import load_config, resolve_config_path
 from .core.assistant import Assistant
 from .llm.client import LLMClient
 from .llm.runtime import LLMRuntimeManager
@@ -22,7 +21,8 @@ from .ui.window import Window
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    config = load_config("config.toml") if Path("config.toml").exists() else load_config()
+    config_path = resolve_config_path()
+    config = load_config(config_path) if config_path is not None else load_config()
     tools = ToolRegistry()
     for tool in SYSTEM_TOOLS:
         tools.register(tool)
@@ -33,7 +33,6 @@ def main() -> None:
     for tool in build_application_tools(catalog):
         tools.register(tool)
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
     confirmation = ConfirmationBridge()
     executor = ToolExecutor(tools, approval_handler=confirmation.request)
     runtime = LLMRuntimeManager(config.llm)
@@ -45,7 +44,9 @@ def main() -> None:
     llm.on_confirmation_start, llm.on_confirmation_finish = assistant.confirmation_start, assistant.confirmation_finish
     window = Window(assistant)
     tray = Tray(window, tts, app.quit)
-    tray.show()
+    app.setQuitOnLastWindowClosed(not tray.available)
+    if tray.available:
+        tray.show()
     window.show()
     tts.preload_async()
     try:

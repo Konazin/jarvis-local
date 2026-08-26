@@ -107,13 +107,63 @@ def test_unknown_application_is_rejected_before_confirmation() -> None:
 
 
 @pytest.mark.parametrize("error", [FileNotFoundError("missing"), OSError("cannot start")])
-def test_application_start_errors_are_structured(error) -> None:
+def test_application_start_errors_are_structured(monkeypatch, error) -> None:
+    monkeypatch.setattr(applications.shutil, "which", lambda _command: "/usr/bin/spotify")
     launcher = Mock(side_effect=error)
     tool = tools(launcher=launcher)["open_application"]
     result = ToolExecutor(registry_for(tool), approval_handler=lambda _request: True).execute(
         "open_application", {"application": "spotify"}
     )
     assert result == {"status": "error", "error": str(error)}
+
+
+def test_missing_application_executable_fails_before_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(applications.shutil, "which", lambda _command: None)
+    launcher, approvals = Mock(), []
+    tool = tools(launcher=launcher)["open_application"]
+    executor = ToolExecutor(registry_for(tool), approval_handler=lambda request: approvals.append(request) or True)
+
+    result = executor.execute("open_application", {"application": "spotify"})
+
+    assert result["status"] == "error"
+    assert "executável" in result["error"]
+    assert approvals == []
+    launcher.assert_not_called()
+
+
+def test_absolute_application_executable_preflight_then_confirmation(tmp_path) -> None:
+    executable = tmp_path / "app"
+    executable.write_text("#!/bin/sh\n")
+    executable.chmod(0o755)
+    catalog = ApplicationCatalog([ApplicationDefinition("app", "App", (str(executable),))])
+    launcher, approvals = Mock(), []
+    tool = {
+        item.name: item for item in build_application_tools(catalog, launcher=launcher)
+    }["open_application"]
+    executor = ToolExecutor(registry_for(tool), approval_handler=lambda request: approvals.append(request) or True)
+
+    assert executor.execute("open_application", {"application": "app"}) == {
+        "opened": True,
+        "application": "app",
+    }
+    assert len(approvals) == 1
+    launcher.assert_called_once()
+
+
+def test_missing_absolute_application_executable_fails_before_confirmation(tmp_path) -> None:
+    executable = tmp_path / "missing-app"
+    catalog = ApplicationCatalog([ApplicationDefinition("app", "App", (str(executable),))])
+    launcher, approvals = Mock(), []
+    tool = {
+        item.name: item for item in build_application_tools(catalog, launcher=launcher)
+    }["open_application"]
+    executor = ToolExecutor(registry_for(tool), approval_handler=lambda request: approvals.append(request) or True)
+
+    result = executor.execute("open_application", {"application": "app"})
+
+    assert result["status"] == "error"
+    assert approvals == []
+    launcher.assert_not_called()
 
 
 def test_open_url_is_confirmed_and_opener_is_called_once() -> None:

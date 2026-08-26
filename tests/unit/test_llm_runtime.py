@@ -152,6 +152,28 @@ def test_tool_support_can_be_optional() -> None:
     assert manager.capabilities.supports_tool_calls is False
 
 
+def test_required_tool_support_rejects_unknown_capability() -> None:
+    unknown = {**CAPABILITIES, "chat_template_caps": {"supports_tool_calls": None}}
+    manager = LLMRuntimeManager(
+        config(), RuntimeClient(health=[200], props=[httpx.Response(200, json=unknown)])
+    )
+
+    with pytest.raises(LLMRuntimeError, match="determinar"):
+        manager.ensure_ready()
+    assert manager.state is LLMRuntimeState.FAILED
+
+
+def test_unknown_tool_support_is_allowed_when_not_required() -> None:
+    unknown = {**CAPABILITIES, "chat_template_caps": {"supports_tool_calls": None}}
+    manager = LLMRuntimeManager(
+        config(require_tool_support=False), RuntimeClient(health=[200], props=[httpx.Response(200, json=unknown)])
+    )
+
+    manager.ensure_ready()
+    assert manager.state is LLMRuntimeState.READY
+    assert manager.capabilities is not None and manager.capabilities.supports_tool_calls is None
+
+
 @pytest.mark.parametrize(
     "props",
     [
@@ -197,6 +219,44 @@ def test_capabilities_are_cached_until_server_restarts(monkeypatch) -> None:
     manager.ensure_ready()
     assert popen.call_count == 2
     assert [url for url, _params in client.calls].count("http://127.0.0.1:8080/props") == 2
+
+
+def test_external_capabilities_refresh_after_ttl() -> None:
+    now = [0.0]
+    refreshed = {**CAPABILITIES, "model_path": "/models/updated.gguf"}
+    client = RuntimeClient(
+        health=[200, 200, 200],
+        props=[httpx.Response(200, json=CAPABILITIES), httpx.Response(200, json=refreshed)],
+    )
+    manager = LLMRuntimeManager(config(), client, clock=lambda: now[0])
+
+    manager.ensure_ready()
+    now[0] = 10
+    manager.ensure_ready()
+    assert [url for url, _params in client.calls].count("http://127.0.0.1:8080/props") == 1
+
+    now[0] = 46
+    manager.ensure_ready()
+    assert manager.capabilities is not None
+    assert manager.capabilities.model_path == "/models/updated.gguf"
+    assert [url for url, _params in client.calls].count("http://127.0.0.1:8080/props") == 2
+
+
+def test_external_capability_refresh_detects_new_incompatibility() -> None:
+    now = [0.0]
+    unsupported = {**CAPABILITIES, "chat_template_caps": {"supports_tool_calls": False}}
+    client = RuntimeClient(
+        health=[200, 200],
+        props=[httpx.Response(200, json=CAPABILITIES), httpx.Response(200, json=unsupported)],
+    )
+    manager = LLMRuntimeManager(config(), client, clock=lambda: now[0])
+    manager.ensure_ready()
+    now[0] = 46
+
+    with pytest.raises(LLMRuntimeError, match="tool calls"):
+        manager.ensure_ready()
+    assert manager.state is LLMRuntimeState.FAILED
+    assert not manager.owns_process
 
 
 def test_managed_incompatible_props_stops_owned_process(monkeypatch) -> None:

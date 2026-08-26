@@ -1,5 +1,6 @@
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -106,6 +107,40 @@ def test_resident_mode_does_not_arm_idle_timer():
     tts._arm_ttl()
     assert timer.cancelled
     assert tts._timer is None
+
+
+def test_resident_maintenance_detects_pressure_while_idle(monkeypatch):
+    tts = manager(mode="resident")
+    tts._process = FakeProcess()
+    tts._memory = lambda: SimpleNamespace(percent=90)
+    tts.state = TTSState.READY
+    monkeypatch.setattr(TTSManager, "_MEMORY_CHECK_INTERVAL_SECONDS", 0.01)
+
+    tts._start_memory_maintenance_locked()
+    deadline = time.monotonic() + 1
+    while tts.state != TTSState.COLD and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert tts.state == TTSState.COLD
+    tts.close()
+
+
+def test_resident_maintenance_is_not_duplicated_and_stops_on_close(monkeypatch):
+    tts = manager(mode="resident")
+    monkeypatch.setattr(TTSManager, "_MEMORY_CHECK_INTERVAL_SECONDS", 1)
+    tts._start_memory_maintenance_locked()
+    first = tts._maintenance_thread
+    tts._start_memory_maintenance_locked()
+    assert tts._maintenance_thread is first
+
+    tts.close()
+    assert first is not None and not first.is_alive()
+
+
+def test_kokoro_python_path_uses_project_root(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    tts = manager(python=".venv-kokoro/bin/python")
+    assert tts._resolve_python_path() == Path(__file__).resolve().parents[2] / ".venv-kokoro/bin/python"
 
 
 def test_preload_is_async_and_failure_is_recoverable():

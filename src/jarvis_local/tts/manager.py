@@ -13,6 +13,8 @@ from typing import Any, Callable
 
 import psutil
 
+from jarvis_local.config import resolve_project_path
+
 log = logging.getLogger(__name__)
 
 
@@ -24,6 +26,8 @@ class TTSState(StrEnum):
 
 
 class TTSManager:
+    _MEMORY_CHECK_INTERVAL_SECONDS = 5.0
+
     def __init__(
         self, config: Any, audio_device: str = "default", threshold: float = 0.85, popen=None, memory=None
     ) -> None:
@@ -33,6 +37,8 @@ class TTSManager:
         self._tempdir = None
         self._lock = threading.RLock()
         self._timer = None
+        self._maintenance_stop = threading.Event()
+        self._maintenance_thread: threading.Thread | None = None
         self._last_used = time.monotonic()
         self.muted = False
         self._popen = popen or subprocess.Popen
@@ -55,6 +61,7 @@ class TTSManager:
             self.state = TTSState.READY
             self._last_used = time.monotonic()
             self._arm_ttl()
+            self._start_memory_maintenance_locked()
             log.info("TTS worker ready")
 
     def preload_async(self) -> threading.Thread | None:
@@ -76,9 +83,7 @@ class TTSManager:
         return thread
 
     def _start_worker(self) -> None:
-        python = Path(self.config.python)
-        if not python.is_absolute():
-            python = Path.cwd() / python
+        python = self._resolve_python_path()
         if not python.is_file():
             raise FileNotFoundError(f"Python do Kokoro não encontrado: {python}")
         self._tempdir = tempfile.mkdtemp(prefix="yuki-tts-", dir="/tmp")
@@ -118,6 +123,9 @@ class TTSManager:
             except (FileNotFoundError, ConnectionRefusedError):
                 time.sleep(0.02)
         raise TimeoutError("timeout ao conectar ao worker Kokoro")
+
+    def _resolve_python_path(self) -> Path:
+        return resolve_project_path(self.config.python)
 
     @staticmethod
     def _drain_stderr(stream) -> None:
@@ -213,6 +221,29 @@ class TTSManager:
         self._timer.daemon = True
         self._timer.start()
 
+    def _start_memory_maintenance_locked(self) -> None:
+        if self.config.mode != "resident":
+            return
+        if self._maintenance_thread is not None and self._maintenance_thread.is_alive():
+            return
+        self._maintenance_stop.clear()
+        self._maintenance_thread = threading.Thread(
+            target=self._memory_maintenance,
+            name="yuki-tts-maintenance",
+            daemon=True,
+        )
+        self._maintenance_thread.start()
+
+    def _memory_maintenance(self) -> None:
+        try:
+            while not self._maintenance_stop.wait(self._MEMORY_CHECK_INTERVAL_SECONDS):
+                try:
+                    self.check_memory_pressure()
+                except Exception:
+                    log.exception("TTS memory maintenance failed")
+        finally:
+            log.info("TTS maintenance stopped")
+
     def _request(self, command: str, payload: bytes = b"") -> tuple[dict, bytes]:
         if not self._socket or not self._process or self._process.poll() is not None:
             self.state = TTSState.COLD
@@ -272,4 +303,9 @@ class TTSManager:
 
     def close(self) -> None:
         with self._lock:
+            self._maintenance_stop.set()
+            maintenance = self._maintenance_thread
+            self._maintenance_thread = None
             self._stop_locked()
+        if maintenance is not None and maintenance is not threading.current_thread():
+            maintenance.join(timeout=1)

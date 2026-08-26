@@ -1,7 +1,16 @@
 import logging
 
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QPushButton,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
 
 from jarvis_local.core.assistant import Assistant
 
@@ -85,5 +94,8 @@ class Window(QWidget):
         self.input.setEnabled(state == "IDLE")
 
     def closeEvent(self, event) -> None:
-        event.ignore()
-        self.hide()
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            event.ignore()
+            self.hide()
+        else:
+            event.accept()

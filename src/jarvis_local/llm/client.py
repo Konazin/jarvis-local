@@ -20,6 +20,8 @@ _FRESHNESS_RETRY_PROMPT = (
     "Esta pergunta pede um fato atual da máquina. Use uma das tools permitidas "
     "antes de responder; não responda apenas com texto."
 )
+MAX_TOOL_CALLS_PER_ROUND = 4
+MAX_TOOL_CALLS_TOTAL = 8
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
 Responda em português brasileiro de forma curta e natural.
@@ -105,6 +107,7 @@ class LLMClient:
         }
         timing_totals: dict[str, float | None] = {"prompt_ms": None, "predicted_ms": None}
         raw_tool_retry_used = False
+        tool_calls_total = 0
         requirement = self.tool_policy.evaluate(text)
         freshness_retry_used = False
         freshness_satisfied = not requirement.required
@@ -129,6 +132,14 @@ class LLMClient:
                 calls = message.get("tool_calls") or []
                 if calls and not isinstance(calls, list):
                     raise LLMError("resposta do llama-server com tool_calls invalido")
+                if calls:
+                    if len(calls) > MAX_TOOL_CALLS_PER_ROUND:
+                        log.warning("tool call limit exceeded: round=%s", len(calls))
+                        raise LLMError("modelo solicitou tools demais em uma única rodada")
+                    if tool_calls_total + len(calls) > MAX_TOOL_CALLS_TOTAL:
+                        log.warning("tool call limit exceeded: total=%s", tool_calls_total + len(calls))
+                        raise LLMError("modelo solicitou tools demais nesta conversa")
+                    tool_calls_total += len(calls)
                 if not calls:
                     content = message.get("content")
                     if not isinstance(content, str):

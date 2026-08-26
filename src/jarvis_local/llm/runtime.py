@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -65,8 +65,11 @@ class LLMRuntimeManager:
     _HEALTH_TIMEOUT_SECONDS = 2.0
     _POLL_INTERVAL_SECONDS = 0.25
     _LOG_JOIN_TIMEOUT_SECONDS = 1.0
+    _CAPABILITIES_TTL_SECONDS = 45.0
 
-    def __init__(self, config: Any, client: httpx.Client | None = None) -> None:
+    def __init__(
+        self, config: Any, client: httpx.Client | None = None, clock: Callable[[], float] | None = None
+    ) -> None:
         self.config = config
         self._host, self._port, self._server_root = self._parse_base_url(config.base_url)
         self._health_url = f"{self._server_root}/health"
@@ -80,6 +83,8 @@ class LLMRuntimeManager:
         self.process: subprocess.Popen[str] | None = None
         self.owns_process = False
         self.capabilities: RuntimeCapabilities | None = None
+        self._capabilities_probed_at: float | None = None
+        self._clock = clock or time.monotonic
         self.log_tail: deque[str] = deque(maxlen=100)
         self._log_thread: threading.Thread | None = None
 
@@ -156,7 +161,7 @@ class LLMRuntimeManager:
             self._forget_dead_owned_process()
             status = self._health_status()
             if status == 200:
-                if self.state is LLMRuntimeState.READY and self.capabilities is not None:
+                if self.state is LLMRuntimeState.READY and self._capabilities_fresh():
                     return
                 if not self.owns_process:
                     log.info("llama-server already running")
@@ -209,8 +214,9 @@ class LLMRuntimeManager:
         log.info("llama-server ready")
 
     def _probe_capabilities(self) -> None:
-        if self.capabilities is not None:
+        if self._capabilities_fresh():
             return
+        was_cached = self.capabilities is not None
         log.info("llama-server capability probe")
         try:
             response = self._client.get(self._props_url, params={"model": self.config.model})
@@ -225,14 +231,26 @@ class LLMRuntimeManager:
         self.capabilities = self._extract_capabilities(payload)
         tool_support = self.capabilities.supports_tool_calls
         log.info("llama-server tool support: %s", tool_support)
-        if self.config.require_tool_support and tool_support is False:
-            raise LLMRuntimeError("llama-server esta saudavel, mas o chat template nao anuncia suporte a tool calls")
+        supports_tools = self.capabilities.raw_chat_template_caps.get("supports_tools")
+        if supports_tools is not None and tool_support is not None and supports_tools is not tool_support:
+            raise LLMRuntimeError("capabilities de tools do llama-server são incoerentes")
+        if self.config.require_tool_support:
+            if tool_support is False:
+                raise LLMRuntimeError(
+                    "llama-server esta saudavel, mas o chat template nao anuncia suporte a tool calls"
+                )
+            if tool_support is None:
+                log.warning("tool capability undetermined")
+                raise LLMRuntimeError("não foi possível determinar o suporte a tool calls do llama-server")
         if self.capabilities.context_size is not None and self.capabilities.context_size < self.config.context_size:
             log.warning(
                 "llama-server context is %s but Yuki expects %s",
                 self.capabilities.context_size,
                 self.config.context_size,
             )
+        self._capabilities_probed_at = self._clock()
+        if was_cached:
+            log.info("runtime capabilities refreshed")
 
     @staticmethod
     def _extract_capabilities(payload: Any) -> RuntimeCapabilities:
@@ -243,9 +261,10 @@ class LLMRuntimeManager:
             raise LLMRuntimeError("capability probe /props sem chat_template_caps compativel")
         raw_caps: dict[str, bool] = {}
         for key, value in caps.items():
-            if not isinstance(key, str) or not isinstance(value, bool):
+            if not isinstance(key, str) or (value is not None and not isinstance(value, bool)):
                 raise LLMRuntimeError("capability probe /props contem chat_template_caps incompativel")
-            raw_caps[key] = value
+            if isinstance(value, bool):
+                raw_caps[key] = value
         settings = payload.get("default_generation_settings", {})
         if not isinstance(settings, dict):
             raise LLMRuntimeError("capability probe /props contem generation settings incompativel")
@@ -339,6 +358,14 @@ class LLMRuntimeManager:
 
     def _invalidate_capabilities(self) -> None:
         self.capabilities = None
+        self._capabilities_probed_at = None
+
+    def _capabilities_fresh(self) -> bool:
+        return (
+            self.capabilities is not None
+            and self._capabilities_probed_at is not None
+            and self._clock() - self._capabilities_probed_at < self._CAPABILITIES_TTL_SECONDS
+        )
 
     def _forget_dead_owned_process(self) -> None:
         if self.owns_process and self.process is not None and self.process.poll() is not None:

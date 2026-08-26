@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from jarvis_local.config import load_config
-from jarvis_local.llm.client import LLMClient, LLMError
+from jarvis_local.llm.client import MAX_TOOL_CALLS_PER_ROUND, LLMClient, LLMError
 from jarvis_local.tools import system
 from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.executor import ToolExecutor
@@ -210,6 +210,54 @@ def test_tool_round_keeps_history_and_current_tool_messages() -> None:
         "tool",
     ]
     assert history == [{"role": "user", "content": "meu projeto é Yuki"}, {"role": "assistant", "content": "certo"}]
+
+
+def tool_calls_response(count, offset=0):
+    return httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {"id": str(offset + index), "function": {"name": "action", "arguments": "{}"}}
+                            for index in range(count)
+                        ]
+                    }
+                }
+            ]
+        },
+    )
+
+
+def action_registry(calls):
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append(True) or {}))
+    return registry
+
+
+def test_tool_call_round_limit_rejects_without_partial_execution() -> None:
+    calls = []
+    registry = action_registry(calls)
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(lambda _request: tool_calls_response(MAX_TOOL_CALLS_PER_ROUND + 1))),
+    )
+
+    with pytest.raises(LLMError, match="uma única rodada"):
+        llm.chat("faça", registry)
+    assert calls == []
+
+
+def test_tool_call_total_limit_rejects_after_previous_rounds() -> None:
+    calls = []
+    registry = action_registry(calls)
+    responses = iter([tool_calls_response(4), tool_calls_response(4, 4), tool_calls_response(1, 8)])
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+
+    with pytest.raises(LLMError, match="nesta conversa"):
+        llm.chat("faça", registry)
+    assert len(calls) == 8
 
 
 def test_live_requirement_restricts_first_request_and_allows_final_round() -> None:

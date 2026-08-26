@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import pytest
 
-from jarvis_local.config import load_config
+from jarvis_local.config import load_config, resolve_config_path, resolve_project_path
 
 
 def test_defaults() -> None:
@@ -11,6 +13,19 @@ def test_defaults() -> None:
     assert config.conversation.max_turns == 8
     assert config.tts.voice == "pf_dora"
     assert config.tts.mode == "resident"
+
+
+def test_project_paths_do_not_follow_cwd(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    config_path = resolve_config_path()
+    assert config_path is not None and config_path.name == "config.toml"
+    assert config_path.parent == Path(__file__).resolve().parents[2]
+    assert resolve_project_path(".venv-kokoro/bin/python") == config_path.parent / ".venv-kokoro/bin/python"
+
+
+def test_absolute_project_path_is_preserved(tmp_path) -> None:
+    absolute = tmp_path / "python"
+    assert resolve_project_path(absolute) == absolute
 
 
 def test_invalid_config(tmp_path) -> None:

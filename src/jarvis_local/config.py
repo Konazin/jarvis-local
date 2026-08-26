@@ -6,6 +6,8 @@ from typing import Mapping
 
 from .apps.catalog import ApplicationDefinition
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 @dataclass(frozen=True)
 class AssistantConfig:
@@ -90,6 +92,18 @@ class Config:
     performance: PerformanceConfig = PerformanceConfig()
     audio: AudioConfig = AudioConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
+
+
+def resolve_project_path(path: str | Path) -> Path:
+    selected = Path(path).expanduser()
+    return selected if selected.is_absolute() else PROJECT_ROOT / selected
+
+
+def resolve_config_path(path: str | Path | None = None) -> Path | None:
+    if path is not None:
+        return Path(path).expanduser()
+    candidate = PROJECT_ROOT / "config.toml"
+    return candidate if candidate.is_file() else None
 
 
 def _section(data: dict, key: str) -> dict:
