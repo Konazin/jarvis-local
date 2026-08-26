@@ -185,49 +185,49 @@ _TOP_MEMORY_PARAMETERS = {
 
 SYSTEM_STATUS_TOOL = Tool(
     "get_system_status",
-    "Retorna uso atual de CPU e memória.",
+    "Retorna o uso total/global atual de CPU e memória RAM do computador. Não use para listar processos.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_status,
 )
 SYSTEM_INFO_TOOL = Tool(
     "get_system_info",
-    "Retorna informações básicas do sistema operacional.",
+    "Retorna informações do sistema operacional e da arquitetura deste computador.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_info,
 )
 DISK_USAGE_TOOL = Tool(
     "get_disk_usage",
-    "Retorna espaço usado e livre em um disco.",
+    "Retorna o espaço usado e livre no disco; use para perguntas sobre armazenamento.",
     _DISK_PARAMETERS,
     RiskLevel.SAFE,
     get_disk_usage,
 )
 BATTERY_STATUS_TOOL = Tool(
     "get_battery_status",
-    "Retorna o estado atual da bateria.",
+    "Retorna a carga e o estado atual da bateria, inclusive se está conectada à tomada.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_battery_status,
 )
 SYSTEM_UPTIME_TOOL = Tool(
     "get_system_uptime",
-    "Retorna há quanto tempo o sistema está ligado.",
+    "Retorna há quanto tempo este computador está ligado (uptime).",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_uptime,
 )
 FIND_PROCESSES_TOOL = Tool(
     "find_processes",
-    "Procura processos em execução pelo nome.",
+    "Procura processos em execução pelo nome para verificar se um aplicativo está rodando.",
     _PROCESS_SEARCH_PARAMETERS,
     RiskLevel.SAFE,
     find_processes,
 )
 TOP_MEMORY_PROCESSES_TOOL = Tool(
     "get_top_memory_processes",
-    "Retorna os processos que mais usam memória RAM.",
+    "Retorna os processos que mais consomem memória RAM. Não use para o uso total do computador.",
     _TOP_MEMORY_PARAMETERS,
     RiskLevel.SAFE,
     get_top_memory_processes,

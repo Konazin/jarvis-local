@@ -9,10 +9,16 @@ import httpx
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 
+from .tool_policy import ToolRequirement, ToolUsePolicy
+
 log = logging.getLogger(__name__)
 _RAW_TOOL_RETRY_PROMPT = (
     "Sua resposta anterior serializou uma chamada de ferramenta como texto. "
     "Use o mecanismo oficial de tool calling ou responda normalmente."
+)
+_FRESHNESS_RETRY_PROMPT = (
+    "Esta pergunta pede um fato atual da máquina. Use uma das tools permitidas "
+    "antes de responder; não responda apenas com texto."
 )
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
@@ -69,6 +75,7 @@ class LLMClient:
         on_confirmation_start=None,
         on_confirmation_finish=None,
         capabilities_provider: Callable[[], Any] | None = None,
+        tool_policy: ToolUsePolicy | None = None,
     ) -> None:
         self.config = config
         self.client = client or httpx.Client(timeout=config.timeout_seconds)
@@ -78,6 +85,7 @@ class LLMClient:
         self.on_confirmation_start = on_confirmation_start
         self.on_confirmation_finish = on_confirmation_finish
         self.capabilities_provider = capabilities_provider
+        self.tool_policy = tool_policy or ToolUsePolicy()
         self._last_metrics: LLMCallMetrics | None = None
 
     @property
@@ -97,6 +105,9 @@ class LLMClient:
         }
         timing_totals: dict[str, float | None] = {"prompt_ms": None, "predicted_ms": None}
         raw_tool_retry_used = False
+        requirement = self.tool_policy.evaluate(text)
+        freshness_retry_used = False
+        freshness_satisfied = not requirement.required
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self._system_prompt()},
             *self._copy_history(history),
@@ -107,7 +118,7 @@ class LLMClient:
                 request_count += 1
                 response = self.client.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
-                    json=self._request_payload(messages, registry),
+                    json=self._request_payload(messages, registry, requirement, freshness_satisfied),
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -131,8 +142,24 @@ class LLMClient:
                         messages.append({"role": "user", "content": _RAW_TOOL_RETRY_PROMPT})
                         log.info("raw tool-call retry")
                         continue
+                    if requirement.required and not freshness_satisfied:
+                        if freshness_retry_used:
+                            raise LLMError("resposta sem tool para uma pergunta de estado atual")
+                        freshness_retry_used = True
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({"role": "user", "content": _FRESHNESS_RETRY_PROMPT})
+                        continue
                     self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
                     return content.strip()
+                if requirement.required and not freshness_satisfied:
+                    invalid_name = self._invalid_required_tool(calls, requirement)
+                    if invalid_name is not None:
+                        if freshness_retry_used:
+                            raise LLMError(f"tool não permitida para esta pergunta: {invalid_name}")
+                        freshness_retry_used = True
+                        messages.append({"role": "assistant", **message})
+                        messages.append({"role": "user", "content": _FRESHNESS_RETRY_PROMPT})
+                        continue
                 tool_call_message = dict(message)
                 tool_call_message.setdefault("role", "assistant")
                 messages.append(tool_call_message)
@@ -162,6 +189,8 @@ class LLMClient:
                             on_execution_start=lambda tool_name: self._callback(self.on_tool_start, tool_name),
                             on_execution_finish=lambda tool_name: self._callback(self.on_tool_finish, tool_name),
                         )
+                        if requirement.required and not freshness_satisfied:
+                            freshness_satisfied = True
                     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                         result = {"error": str(exc)}
                     try:
@@ -205,13 +234,20 @@ class LLMClient:
             copied.append({"role": role, "content": content})
         return copied
 
-    def _request_payload(self, messages: list[dict[str, Any]], registry: ToolRegistry) -> dict[str, Any]:
+    def _request_payload(
+        self,
+        messages: list[dict[str, Any]],
+        registry: ToolRegistry,
+        requirement: ToolRequirement | None = None,
+        freshness_satisfied: bool = True,
+    ) -> dict[str, Any]:
+        required = requirement is not None and requirement.required and not freshness_satisfied
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": messages,
             "max_tokens": self.config.max_tokens,
-            "tools": registry.schemas(),
-            "tool_choice": "auto",
+            "tools": registry.schemas(requirement.allowed_tools if required else None),
+            "tool_choice": "required" if required else "auto",
         }
         if not self.config.thinking:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
@@ -219,6 +255,17 @@ class LLMClient:
             if getattr(capabilities, "supports_reasoning_effort", False) is True:
                 payload["reasoning_effort"] = "none"
         return payload
+
+    @staticmethod
+    def _invalid_required_tool(calls: list[Any], requirement: ToolRequirement) -> str | None:
+        allowed = set(requirement.allowed_tools)
+        for call in calls:
+            if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
+                return "chamada malformada"
+            name = call["function"].get("name")
+            if not isinstance(name, str) or name not in allowed:
+                return str(name or "ausente")
+        return None
 
     @staticmethod
     def _raw_tool_name(content: str, registry: ToolRegistry) -> str | None:

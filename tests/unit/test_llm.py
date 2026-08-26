@@ -212,6 +212,111 @@ def test_tool_round_keeps_history_and_current_tool_messages() -> None:
     assert history == [{"role": "user", "content": "meu projeto é Yuki"}, {"role": "assistant", "content": "certo"}]
 
 
+def test_live_requirement_restricts_first_request_and_allows_final_round() -> None:
+    requests = []
+    registry = ToolRegistry()
+    registry.register(Tool("get_system_status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: {"memory": 42}))
+    registry.register(Tool("get_top_memory_processes", "ranking", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": "1", "function": {"name": "get_system_status", "arguments": "{}"}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "42%"}}]}),
+        ]
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat("Quanta RAM estou usando?", registry) == "42%"
+    assert [item["function"]["name"] for item in requests[0]["tools"]] == ["get_system_status"]
+    assert requests[0]["tool_choice"] == "required"
+    assert requests[1]["tool_choice"] == "auto"
+
+
+def test_live_requirement_rejects_text_only_response() -> None:
+    responses = iter(
+        [
+            httpx.Response(200, json={"choices": [{"message": {"content": "acho que está em 42%"}}]}),
+            httpx.Response(200, json={"choices": [{"message": {"content": "ainda sem consulta"}}]}),
+        ]
+    )
+    registry = ToolRegistry()
+    registry.register(Tool("get_system_status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+
+    with pytest.raises(LLMError, match="estado atual"):
+        llm.chat("Quanta RAM estou usando?", registry)
+
+
+def test_live_requirement_rejects_wrong_tool_without_execution() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(
+        Tool("get_system_status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append("status"))
+    )
+    registry.register(
+        Tool("get_top_memory_processes", "ranking", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append("top"))
+    )
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "1",
+                                        "function": {"name": "get_top_memory_processes", "arguments": "{}"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "2",
+                                        "function": {"name": "get_top_memory_processes", "arguments": "{}"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+
+    with pytest.raises(LLMError, match="não permitida"):
+        llm.chat("Quanta RAM estou usando?", registry)
+    assert calls == []
+
+
 def test_offline_and_invalid_response() -> None:
     transport = httpx.MockTransport(lambda _request: httpx.ConnectError("offline"))
     llm = LLMClient(load_config().llm, httpx.Client(transport=transport))

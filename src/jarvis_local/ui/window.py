@@ -38,7 +38,7 @@ class Window(QWidget):
         self.input = QLineEdit()
 
         self.assistant.on_state_change = self.state_changed.emit
-        self.state_changed.connect(self.status.setText)
+        self.state_changed.connect(self._on_state_changed)
 
         self.input.setPlaceholderText("Digite uma mensagem...")
 
@@ -60,8 +60,7 @@ class Window(QWidget):
         if not text:
             return
         self.input.clear()
-        self.input.setEnabled(False)
-        self.status.setText("THINKING")
+        self._on_state_changed("THINKING")
         self.history.addItem(f"Você: {text}")
         self.thread = QThread(self)
         self.worker = AskWorker(self.assistant, text)
@@ -77,12 +76,13 @@ class Window(QWidget):
 
     def done(self, answer: str) -> None:
         self.history.addItem(f"Yuki: {answer}")
-        self.input.setEnabled(True)
 
     def failed(self, error: str) -> None:
         self.history.addItem(f"Erro: {error}")
-        self.status.setText("IDLE")
-        self.input.setEnabled(True)
+
+    def _on_state_changed(self, state: str) -> None:
+        self.status.setText(state)
+        self.input.setEnabled(state == "IDLE")
 
     def closeEvent(self, event) -> None:
         event.ignore()

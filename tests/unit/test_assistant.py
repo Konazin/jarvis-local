@@ -1,7 +1,9 @@
+import threading
+
 import pytest
 
 from jarvis_local.config import ConversationConfig
-from jarvis_local.core.assistant import Assistant
+from jarvis_local.core.assistant import Assistant, AssistantBusyError
 from jarvis_local.core.state import State
 from jarvis_local.llm.session import ConversationSession
 
@@ -56,6 +58,52 @@ def test_text_is_returned_without_waiting_for_tts() -> None:
     assert tts.text == "Você está usando 8 gigabytes de RAM."
     assert assistant.state.current == State.SPEAKING
     assert states == ["THINKING", "SPEAKING"]
+
+
+def test_second_ask_is_rejected_until_tts_finishes() -> None:
+    events, tts, session = [], FakeTTS(), conversation()
+    assistant = Assistant(RecordingLLM(events), object(), tts, runtime=RecordingRuntime(events), session=session)
+
+    assistant.ask("primeira")
+    with pytest.raises(AssistantBusyError, match="ocupada"):
+        assistant.ask("segunda")
+
+    assert assistant.state.current == State.SPEAKING
+    assert events == ["ready", "chat"]
+    assert session.snapshot().turn_count == 1
+
+    tts.on_done()
+    assert assistant.state.current == State.IDLE
+    assistant.ask("segunda")
+    assert events == ["ready", "chat", "ready", "chat"]
+    assert session.snapshot().turn_count == 2
+
+
+def test_check_and_transition_to_thinking_is_atomic() -> None:
+    started, release = threading.Event(), threading.Event()
+
+    class BlockingLLM:
+        calls = 0
+
+        def chat(self, text, tools, history=None):
+            self.calls += 1
+            started.set()
+            release.wait(timeout=1)
+            return "ok"
+
+    llm = BlockingLLM()
+    assistant = Assistant(llm, object())
+    first = threading.Thread(target=assistant.ask, args=("primeira",))
+    first.start()
+    assert started.wait(timeout=1)
+
+    with pytest.raises(AssistantBusyError):
+        assistant.ask("segunda")
+
+    release.set()
+    first.join(timeout=1)
+    assert llm.calls == 1
+    assert assistant.state.current == State.IDLE
 
 
 def test_visual_response_is_naturalized_and_tts_gets_speech_text() -> None:

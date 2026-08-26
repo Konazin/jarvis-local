@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from jarvis_local.llm.client import LLMClient
 from jarvis_local.tools.registry import ToolRegistry
@@ -10,6 +11,10 @@ from .state import State, StateMachine
 log = logging.getLogger(__name__)
 
 
+class AssistantBusyError(RuntimeError):
+    pass
+
+
 class Assistant:
     def __init__(
         self, llm: LLMClient, tools: ToolRegistry, tts=None, on_state_change=None, runtime=None, session=None
@@ -19,30 +24,62 @@ class Assistant:
         self.speech_normalizer = SpeechNormalizer()
         self.state = StateMachine()
         self.on_state_change = on_state_change
+        self._state_lock = threading.RLock()
 
     def _transition(self, target: State) -> None:
-        self.state.transition(target)
-        if self.on_state_change:
-            self.on_state_change(target.value)
+        with self._state_lock:
+            self.state.transition(target)
+            callback = self.on_state_change
+        if callback:
+            callback(target.value)
+
+    def _transition_if_current(self, current: State, target: State) -> bool:
+        with self._state_lock:
+            if self.state.current is not current:
+                return False
+            self.state.transition(target)
+            callback = self.on_state_change
+        if callback:
+            callback(target.value)
+        return True
+
+    def _begin_ask(self) -> None:
+        with self._state_lock:
+            if self.state.current is not State.IDLE:
+                raise AssistantBusyError("Yuki está ocupada")
+            self.state.transition(State.THINKING)
+            callback = self.on_state_change
+        if callback:
+            callback(State.THINKING.value)
+
+    def _fail(self) -> None:
+        with self._state_lock:
+            transitions = []
+            if self.state.current is not State.IDLE and self.state.current is not State.ERROR:
+                self.state.transition(State.ERROR)
+                transitions.append(State.ERROR.value)
+            if self.state.current is State.ERROR:
+                self.state.transition(State.IDLE)
+                transitions.append(State.IDLE.value)
+            callback = self.on_state_change
+        if callback:
+            for state in transitions:
+                callback(state)
 
     def tool_start(self, _name: str) -> None:
-        if self.state.current == State.THINKING:
-            self._transition(State.EXECUTING)
+        self._transition_if_current(State.THINKING, State.EXECUTING)
 
     def tool_finish(self, _name: str) -> None:
-        if self.state.current == State.EXECUTING:
-            self._transition(State.THINKING)
+        self._transition_if_current(State.EXECUTING, State.THINKING)
 
     def confirmation_start(self, _request) -> None:
-        if self.state.current == State.THINKING:
-            self._transition(State.CONFIRMING)
+        self._transition_if_current(State.THINKING, State.CONFIRMING)
 
     def confirmation_finish(self, _request, _approved: bool) -> None:
-        if self.state.current == State.CONFIRMING:
-            self._transition(State.THINKING)
+        self._transition_if_current(State.CONFIRMING, State.THINKING)
 
     def ask(self, text: str) -> str:
-        self._transition(State.THINKING)
+        self._begin_ask()
         try:
             if self.runtime is not None:
                 self.runtime.ensure_ready()
@@ -57,8 +94,7 @@ class Assistant:
                 self._transition(State.IDLE)
             return answer
         except Exception:
-            self._transition(State.ERROR)
-            self._transition(State.IDLE)
+            self._fail()
             raise
 
     def clear_conversation(self) -> None:
@@ -66,10 +102,8 @@ class Assistant:
             self.session.clear()
 
     def _tts_error(self, _error: Exception) -> None:
-        if self.state.current == State.SPEAKING:
-            self._transition(State.ERROR)
-            self._transition(State.IDLE)
+        if self._transition_if_current(State.SPEAKING, State.ERROR):
+            self._transition_if_current(State.ERROR, State.IDLE)
 
     def _tts_done(self) -> None:
-        if self.state.current == State.SPEAKING:
-            self._transition(State.IDLE)
+        self._transition_if_current(State.SPEAKING, State.IDLE)

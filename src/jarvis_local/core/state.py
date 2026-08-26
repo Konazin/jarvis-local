@@ -12,7 +12,7 @@ class State(str, Enum):
 
 _TRANSITIONS = {
     State.IDLE: {State.THINKING},
-    State.THINKING: {State.CONFIRMING, State.EXECUTING, State.SPEAKING, State.ERROR},
+    State.THINKING: {State.CONFIRMING, State.EXECUTING, State.SPEAKING, State.IDLE, State.ERROR},
     State.CONFIRMING: {State.THINKING, State.EXECUTING, State.ERROR},
     State.EXECUTING: {State.THINKING, State.ERROR},
     State.SPEAKING: {State.IDLE, State.ERROR},
