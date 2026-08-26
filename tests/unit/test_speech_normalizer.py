@@ -12,6 +12,7 @@ def normalizer() -> SpeechNormalizer:
     ("visual", "speech"),
     [
         ("1,2 GB", "1 vírgula 2 gigabytes"),
+        ("1,4 GB", "1 vírgula 4 gigabytes"),
         ("6,8 GB", "6 vírgula 8 gigabytes"),
         ("680 MB", "680 megabytes"),
         ("63%", "63 por cento"),

@@ -84,6 +84,8 @@ def test_open_application_is_confirmed_and_schema_uses_alias_enum() -> None:
     tool = tools()["open_application"]
     assert tool.risk_level is RiskLevel.CONFIRM
     assert tool.parameters["properties"]["application"]["enum"] == ["spotify", "vscode"]
+    assert "Inicia" in tool.description
+    assert "sucesso" not in tool.description
 
 
 def test_open_application_starts_exact_configured_command_without_waiting() -> None:

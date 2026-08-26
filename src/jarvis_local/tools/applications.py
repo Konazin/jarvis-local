@@ -226,7 +226,7 @@ def build_application_tools(
         tools.append(
             Tool(
                 "open_application",
-                "Abre um aplicativo previamente configurado, após confirmação do usuário.",
+                "Inicia um aplicativo previamente configurado, após confirmação do usuário.",
                 application_parameters,
                 RiskLevel.CONFIRM,
                 lambda application: _open_application(catalog, launcher, application),

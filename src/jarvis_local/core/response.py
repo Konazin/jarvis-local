@@ -4,10 +4,18 @@ import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 _PRECISION = re.compile(
-    r"\b(?:exatamente|exato|valor exato|precisamente|sem arredondar|com casas decimais|qual o valor preciso)\b",
+    r"\b(?:exatamente|exato|valor exato|precisamente|sem arredondar|com casas decimais|qual o valor preciso|"
+    r"quanto tempo exato|tempo exato|uptime exato)\b",
     re.IGNORECASE,
 )
 _PROTECTED = re.compile(r"```[\s\S]*?```|`[^`\n]*`|https?://[^\s<>]+", re.IGNORECASE)
+_DURATION = re.compile(
+    r"(?<![\w.])(?P<approx>(?:cerca de|aproximadamente|quase)\s+)?"
+    r"(?:(?P<hours>\d+)\s*(?:h|horas?)\s*(?:e\s*)?(?P<minutes>\d+)\s*(?:min|minutos?)\b|"
+    r"(?P<compact_hours>\d+)h\s*(?P<compact_minutes>\d+)\b|"
+    r"(?P<only_minutes>\d+)\s*(?:min|minutos?)\b)",
+    re.IGNORECASE,
+)
 _NUMBER_WITH_UNIT = re.compile(
     r"(?<![\w.])(?P<number>[+-]?\d+(?:[.,]\d+)?)[ \t]*(?P<unit>%|°\s?[CF]|(?:KB|MB|GB|TB|B)\b|"
     r"(?:segundos?|minutos?|horas?|seg|min|h)\b)",
@@ -45,22 +53,46 @@ def _format_decimal(value: Decimal) -> str:
     return rendered.replace(".", ",")
 
 
+def _normalize_duration(segment: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        if match.group("hours") is not None or match.group("compact_hours") is not None:
+            hours = match.group("hours") or match.group("compact_hours")
+            minutes = match.group("minutes") or match.group("compact_minutes")
+            total_minutes = int(hours) * 60 + int(minutes)
+            if total_minutes >= 60:
+                hours = (total_minutes + 30) // 60
+                unit = "hora" if hours == 1 else "horas"
+                return f"cerca de {hours} {unit}"
+            minutes = total_minutes
+        else:
+            minutes = int(match.group("only_minutes"))
+        unit = "minuto" if minutes == 1 else "minutos"
+        return f"cerca de {minutes} {unit}"
+
+    return _DURATION.sub(replace, segment)
+
+
 def _normalize_segment(segment: str) -> str:
     def replace(match: re.Match[str]) -> str:
         raw_number = match.group("number")
         try:
             value = _decimal(raw_number)
-            rounded = _rounded(value, match.group("unit") == "%")
+            unit = match.group("unit").strip()
+            display_unit = unit
+            converted = unit.upper() == "MB" and value >= 1024
+            if converted:
+                value /= Decimal("1024")
+                display_unit = "GB"
+            rounded = _rounded(value, unit == "%")
         except InvalidOperation:
             return match.group(0)
-        if rounded == value and "." not in raw_number and "," not in raw_number:
+        if not converted and rounded == value and "." not in raw_number and "," not in raw_number:
             return match.group(0)
         prefix = segment[: match.start()]
         has_approximation = re.search(r"(?:cerca de|aproximadamente|quase)\s*$", prefix, re.IGNORECASE)
         approximation = "" if has_approximation else "cerca de "
-        unit = match.group("unit").strip()
-        separator = "" if unit == "%" else " "
-        return f"{approximation}{_format_decimal(rounded)}{separator}{unit}"
+        separator = "" if display_unit == "%" else " "
+        return f"{approximation}{_format_decimal(rounded)}{separator}{display_unit}"
 
     return _NUMBER_WITH_UNIT.sub(replace, segment)
 
@@ -80,4 +112,4 @@ class ResponseNaturalizer:
     def normalize(self, user_text: str, assistant_text: str) -> str:
         if _PRECISION.search(user_text):
             return assistant_text
-        return _transform_unprotected(assistant_text, _normalize_segment)
+        return _transform_unprotected(assistant_text, lambda segment: _normalize_segment(_normalize_duration(segment)))

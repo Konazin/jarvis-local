@@ -11,8 +11,15 @@ def naturalizer() -> ResponseNaturalizer:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
+        ("10.7 GB", "cerca de 11 GB"),
+        ("10.2 GB", "cerca de 10 GB"),
+        ("94.8 GB", "cerca de 95 GB"),
+        ("127.3 MB", "cerca de 130 MB"),
+        ("1400 MB", "cerca de 1,4 GB"),
+        ("1024 MB", "cerca de 1 GB"),
+        ("1000 MB", "1000 MB"),
+        ("950 MB", "950 MB"),
         ("677.72 MB", "cerca de 680 MB"),
-        ("94.84 GB", "cerca de 95 GB"),
         ("63.27%", "cerca de 63%"),
         ("-5.4 °C", "cerca de -5 °C"),
         ("-12.37 GB", "cerca de -12 GB"),
@@ -30,6 +37,28 @@ def test_explicit_precision_is_preserved(naturalizer) -> None:
     assert naturalizer.normalize("quanto exatamente?", "677.72 MB") == "677.72 MB"
     assert naturalizer.normalize("qual o valor preciso?", "63,27%") == "63,27%"
     assert naturalizer.normalize("valor exato", "-5.4 °C") == "-5.4 °C"
+    assert naturalizer.normalize("quanto exatamente?", "10.73 GB") == "10.73 GB"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("6 horas e 52 minutos", "cerca de 7 horas"),
+        ("6 horas e 12 minutos", "cerca de 6 horas"),
+        ("1h31", "cerca de 2 horas"),
+        ("25 min", "cerca de 25 minutos"),
+        (
+            "O computador está ligado há aproximadamente 6 horas e 52 minutos.",
+            "O computador está ligado há cerca de 7 horas.",
+        ),
+    ],
+)
+def test_uptime_is_casual_without_fake_minute_precision(naturalizer, raw, expected) -> None:
+    assert naturalizer.normalize("status", raw) == expected
+
+
+def test_exact_uptime_preserves_hours_and_minutes(naturalizer) -> None:
+    assert naturalizer.normalize("quanto tempo exato?", "6 horas e 52 minutos") == "6 horas e 52 minutos"
 
 
 @pytest.mark.parametrize(

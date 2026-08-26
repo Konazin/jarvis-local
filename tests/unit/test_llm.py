@@ -122,7 +122,7 @@ def test_context_budget_trims_only_old_complete_turns() -> None:
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
-    config = replace(load_config().llm, context_size=620, max_tokens=50)
+    config = replace(load_config().llm, context_size=670, max_tokens=50)
     llm = LLMClient(config, httpx.Client(transport=httpx.MockTransport(handler)))
     history = [
         {"role": "user", "content": "a" * 30},
