@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis_local.config import load_config, resolve_config_path, resolve_project_path
+from jarvis_local.config import AudioConfig, load_config, resolve_config_path, resolve_project_path
 
 
 def test_defaults() -> None:
@@ -13,6 +13,24 @@ def test_defaults() -> None:
     assert config.conversation.max_turns == 8
     assert config.tts.voice == "pf_dora"
     assert config.tts.mode == "resident"
+    assert config.audio.input_device == "default"
+    assert config.audio.max_recording_seconds == 30.0
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("input_device", ""),
+        ("input_device", -1),
+        ("input_device", True),
+        ("max_recording_seconds", 0),
+        ("max_recording_seconds", -1),
+        ("max_recording_seconds", True),
+    ],
+)
+def test_invalid_audio_config(field, value) -> None:
+    with pytest.raises(ValueError):
+        AudioConfig(**{field: value})
 
 
 def test_project_paths_do_not_follow_cwd(monkeypatch, tmp_path) -> None:

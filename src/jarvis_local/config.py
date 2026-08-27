@@ -1,3 +1,4 @@
+import math
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +63,23 @@ class PerformanceConfig:
 @dataclass(frozen=True)
 class AudioConfig:
     output_device: str = "default"
+    input_device: str | int = "default"
+    max_recording_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.input_device, bool) or not isinstance(self.input_device, (str, int)):
+            raise ValueError("input_device deve ser 'default', uma string ou um índice inteiro")
+        if isinstance(self.input_device, str) and not self.input_device.strip():
+            raise ValueError("input_device não pode ser vazio")
+        if isinstance(self.input_device, int) and self.input_device < 0:
+            raise ValueError("input_device deve ser um índice não negativo")
+        if (
+            isinstance(self.max_recording_seconds, bool)
+            or not isinstance(self.max_recording_seconds, (int, float))
+            or not math.isfinite(self.max_recording_seconds)
+            or self.max_recording_seconds <= 0
+        ):
+            raise ValueError("max_recording_seconds deve ser positivo")
 
 
 @dataclass(frozen=True)

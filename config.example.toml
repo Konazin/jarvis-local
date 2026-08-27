@@ -40,7 +40,9 @@ python = ".venv-kokoro/bin/python"
 memory_pressure_threshold = 0.85
 
 [audio]
+input_device = "default"
 output_device = "default"
+max_recording_seconds = 30.0
 
 # Exemplos: altere ou remova conforme os aplicativos instalados.
 [applications.firefox]

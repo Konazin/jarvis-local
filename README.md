@@ -48,6 +48,10 @@ A Yuki também lista aplicativos configurados em execução e pode solicitar seu
 
 Respostas técnicas são humanizadas de forma determinística depois do LLM; valores exatos permanecem preservados quando solicitados. O texto visual é salvo na sessão, enquanto o TTS recebe uma versão própria, com decimais e unidades escritos para fala. O Kokoro permanece residente normalmente, faz preload em background e pode ser descarregado sob pressão de memória.
 
+### Microphone capture foundation
+
+A captura de microfone é local e fica somente em memória, em PCM signed 16-bit mono a 16 kHz, sem persistência ou envio de áudio. Ela ainda não está integrada ao STT nem à interface; a próxima etapa será a transcrição com whisper.cpp.
+
 ### Contexto da sessão
 
 O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.
