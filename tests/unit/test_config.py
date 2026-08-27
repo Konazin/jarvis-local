@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis_local.config import AudioConfig, load_config, resolve_config_path, resolve_project_path
+from jarvis_local.config import AudioConfig, STTConfig, load_config, resolve_config_path, resolve_project_path
 
 
 def test_defaults() -> None:
@@ -15,6 +15,8 @@ def test_defaults() -> None:
     assert config.tts.mode == "resident"
     assert config.audio.input_device == "default"
     assert config.audio.max_recording_seconds == 30.0
+    assert config.stt.engine == "whisper.cpp"
+    assert config.stt.model_path == "models/whisper/ggml-base.bin"
 
 
 @pytest.mark.parametrize(
@@ -31,6 +33,24 @@ def test_defaults() -> None:
 def test_invalid_audio_config(field, value) -> None:
     with pytest.raises(ValueError):
         AudioConfig(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("engine", "faster-whisper"),
+        ("binary", ""),
+        ("model_path", ""),
+        ("language", ""),
+        ("threads", 0),
+        ("threads", True),
+        ("timeout_seconds", 0),
+        ("timeout_seconds", -1),
+    ],
+)
+def test_invalid_stt_config(field, value) -> None:
+    with pytest.raises(ValueError):
+        STTConfig(**{field: value})
 
 
 def test_project_paths_do_not_follow_cwd(monkeypatch, tmp_path) -> None:
@@ -57,6 +77,22 @@ def test_valid_file_and_response_limit(tmp_path) -> None:
     path = tmp_path / "config.toml"
     path.write_text("[llm]\nmax_tokens = 128\n")
     assert load_config(path).llm.max_tokens == 128
+
+
+def test_custom_stt_config(tmp_path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[stt]\nenabled = false\nengine = "whisper.cpp"\nbinary = "/opt/whisper-cli"\n'
+        'model_path = "/models/ggml-base.bin"\nlanguage = "pt"\nthreads = 8\ntimeout_seconds = 12.5\n'
+    )
+
+    config = load_config(path)
+
+    assert not config.stt.enabled
+    assert config.stt.binary == "/opt/whisper-cli"
+    assert config.stt.model_path == "/models/ggml-base.bin"
+    assert config.stt.threads == 8
+    assert config.stt.timeout_seconds == 12.5
 
 
 def test_application_config_is_dynamic_and_defensive(tmp_path) -> None:

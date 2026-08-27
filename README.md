@@ -52,6 +52,10 @@ Respostas técnicas são humanizadas de forma determinística depois do LLM; val
 
 A captura de microfone é local e fica somente em memória, em PCM signed 16-bit mono a 16 kHz, sem persistência ou envio de áudio. Ela ainda não está integrada ao STT nem à interface; a próxima etapa será a transcrição com whisper.cpp.
 
+### STT foundation
+
+`AudioRecording` → `WhisperTranscriber` → `whisper.cpp` → `TranscriptionResult`. A transcrição é local e one-shot, usando um `whisper-cli` configurado em `[stt]` e um modelo Whisper base multilingual fornecido localmente. O modelo não é baixado automaticamente; o áudio usa somente um WAV temporário, removido ao fim da operação, e ainda não há UI, wake word ou integração com `Assistant`.
+
 ### Contexto da sessão
 
 O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.

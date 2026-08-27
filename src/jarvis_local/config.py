@@ -83,6 +83,35 @@ class AudioConfig:
 
 
 @dataclass(frozen=True)
+class STTConfig:
+    enabled: bool = True
+    engine: str = "whisper.cpp"
+    binary: str = "whisper-cli"
+    model_path: str = "models/whisper/ggml-base.bin"
+    language: str = "pt"
+    threads: int = 4
+    timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("stt.enabled deve ser booleano")
+        if self.engine != "whisper.cpp":
+            raise ValueError("stt.engine deve ser 'whisper.cpp'")
+        for name, value in (("binary", self.binary), ("model_path", self.model_path), ("language", self.language)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"stt.{name} não pode ser vazio")
+        if isinstance(self.threads, bool) or not isinstance(self.threads, int) or self.threads < 1:
+            raise ValueError("stt.threads deve ser um inteiro positivo")
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, (int, float))
+            or not math.isfinite(self.timeout_seconds)
+            or self.timeout_seconds <= 0
+        ):
+            raise ValueError("stt.timeout_seconds deve ser positivo")
+
+
+@dataclass(frozen=True)
 class ApplicationConfig:
     name: str
     command: tuple[str, ...]
@@ -109,6 +138,7 @@ class Config:
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
     audio: AudioConfig = AudioConfig()
+    stt: STTConfig = STTConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
 
 
@@ -168,6 +198,7 @@ def load_config(path: str | Path | None = None) -> Config:
         TTSConfig(**_section(data, "tts")),
         PerformanceConfig(**_section(data, "performance")),
         AudioConfig(**_section(data, "audio")),
+        STTConfig(**_section(data, "stt")),
         _applications(data),
     )
     if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0 or config.llm.max_tokens < 1:
