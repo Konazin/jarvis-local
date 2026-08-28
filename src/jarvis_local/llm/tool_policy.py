@@ -43,6 +43,27 @@ class ToolUsePolicy:
         if unsupported is not None:
             return ToolRequirement(False, mode=ToolRequirementMode.UNSUPPORTED, reason=unsupported)
 
+        if _has_any(text, "janela ativa", "janela atual", "aplicativo em foco", "app em foco"):
+            return ToolRequirement(True, ("get_active_window",))
+        if _has_any(
+            text, "status da rede", "estado da rede", "interfaces de rede", "conectado a rede"
+        ):
+            return ToolRequirement(True, ("get_network_status",))
+        if _has_any(text, "volume", "áudio", "audio", "mudo", "mutado") and _has_any(
+            text, "quanto", "nível", "nivel", "status", "estado", "está", "esta", "som"
+        ):
+            return ToolRequirement(True, ("get_audio_status",))
+        if _has_any(text, "coloque", "defina", "ajuste", "aumente", "diminua") and "volume" in text:
+            return ToolRequirement(True, ("set_volume",))
+        if _has_any(text, "ative o mudo", "desative o mudo", "silencie", "tirar do mudo", "retire o mudo"):
+            return ToolRequirement(True, ("toggle_mute",))
+        if _has_any(text, "pause a música", "pause a musica", "retome a música", "retome a musica", "play pause"):
+            return ToolRequirement(True, ("media_play_pause",))
+        if _has_any(text, "próxima música", "proxima musica", "próxima faixa", "proxima faixa"):
+            return ToolRequirement(True, ("media_next",))
+        if _has_any(text, "música anterior", "musica anterior", "faixa anterior"):
+            return ToolRequirement(True, ("media_previous",))
+
         if _has_any(text, "processo", "processos", "aplicativo", "aplicativos", "programa", "programas"):
             if _has_any(text, "ram", "memoria") and _has_any(
                 text, "mais", "maior", "usa", "usam", "consome", "consomem", "consumindo"

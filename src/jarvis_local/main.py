@@ -10,6 +10,7 @@ from .llm.client import LLMClient
 from .llm.runtime import LLMRuntimeManager
 from .llm.session import ConversationSession
 from .tools.applications import build_application_tools
+from .tools.desktop import DESKTOP_TOOLS
 from .tools.executor import ToolExecutor
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_TOOLS
@@ -25,6 +26,8 @@ def main() -> None:
     config = load_config(config_path) if config_path is not None else load_config()
     tools = ToolRegistry()
     for tool in SYSTEM_TOOLS:
+        tools.register(tool)
+    for tool in DESKTOP_TOOLS:
         tools.register(tool)
     catalog = ApplicationCatalog(
         ApplicationDefinition(alias, application.name, application.command, application.process_names)
