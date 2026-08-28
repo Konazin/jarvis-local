@@ -14,22 +14,27 @@ from PySide6.QtWidgets import (
 
 from jarvis_local.audio import AudioCoordinator, AudioOwnerState
 from jarvis_local.core.assistant import Assistant
+from jarvis_local.vision import VisionController, VisualIntentPolicy
 from jarvis_local.voice import VADUtterance, VoiceInteractionController, VoiceState, WakeWordDetector
 
-from ..config import AudioConfig, STTConfig, VADConfig, WakeConfig
+from ..config import AudioConfig, STTConfig, VADConfig, VisionConfig, WakeConfig
 
 
 class AskWorker(QObject):
     finished = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, assistant: Assistant, text: str) -> None:
+    def __init__(self, assistant: Assistant, text: str, image=None) -> None:
         super().__init__()
-        self.assistant, self.text = assistant, text
+        self.assistant, self.text, self.image = assistant, text, image
 
     def run(self) -> None:
         try:
-            self.finished.emit(self.assistant.ask(self.text))
+            if self.image is None:
+                answer = self.assistant.ask(self.text)
+            else:
+                answer = self.assistant.ask(self.text, image=self.image)
+            self.finished.emit(answer)
         except Exception as exc:
             logging.exception("falha na mensagem")
             self.failed.emit(str(exc))
@@ -47,6 +52,8 @@ class Window(QWidget):
         wake_config: WakeConfig | None = None,
         vad_config: VADConfig | None = None,
         audio_coordinator: AudioCoordinator | None = None,
+        vision_config: VisionConfig | None = None,
+        vision_controller: VisionController | None = None,
     ) -> None:
         super().__init__()
 
@@ -56,6 +63,9 @@ class Window(QWidget):
         self._closing = False
         selected_wake = wake_config or WakeConfig()
         selected_vad = vad_config or VADConfig()
+        self.vision = vision_controller or VisionController(vision_config or VisionConfig(), parent=self)
+        self.visual_policy = VisualIntentPolicy()
+        self._visual_prompt: str | None = None
         self.audio = audio_coordinator or AudioCoordinator(
             audio_config or AudioConfig(),
             selected_wake.pre_roll_ms,
@@ -107,12 +117,20 @@ class Window(QWidget):
         self.audio.wake_detected.connect(self._on_wake_detected)
         self.audio.utterance_ready.connect(self._on_utterance_ready)
         self.audio.failed.connect(self._on_audio_failed)
+        self.vision.started.connect(self._on_vision_started)
+        self.vision.captured.connect(self._on_vision_captured)
+        self.vision.failed.connect(self._on_vision_failed)
+        self.vision.finished.connect(self._on_vision_finished)
 
         row = QHBoxLayout()
         row.addWidget(self.input)
         row.addWidget(self.send)
         row.addWidget(self.voice_button)
         row.addWidget(self.wake_button)
+        self.look_button = QPushButton("Olhar")
+        self.look_button.setToolTip("Analisar a janela ativa")
+        self.look_button.clicked.connect(self._look)
+        row.addWidget(self.look_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.status)
@@ -123,9 +141,13 @@ class Window(QWidget):
             self._toggle_wake()
 
     def ask(self) -> None:
-        self._submit_text(self.input.text())
+        text = self.input.text().strip()
+        if self.visual_policy.is_visual_intent(text):
+            self._start_visual(text)
+            return
+        self._submit_text(text)
 
-    def _submit_text(self, text: str, preserve_input: bool = False) -> bool:
+    def _submit_text(self, text: str, preserve_input: bool = False, image=None) -> bool:
         text = text.strip()
         if not text or not self._assistant_is_idle() or self._voice_state is not VoiceState.READY:
             return False
@@ -136,7 +158,7 @@ class Window(QWidget):
         self._on_state_changed("THINKING")
         self.history.addItem(f"Você: {text}")
         self.thread = QThread(self)
-        self.worker = AskWorker(self.assistant, text)
+        self.worker = AskWorker(self.assistant, text, image=image)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.done)
@@ -147,6 +169,47 @@ class Window(QWidget):
         self.thread.finished.connect(self.thread.deleteLater)
         self.thread.start()
         return True
+
+    def _look(self) -> None:
+        prompt = self.input.text().strip() or "Descreva o que você consegue ver nesta janela."
+        self._start_visual(prompt)
+
+    def _start_visual(self, prompt: str) -> bool:
+        if not self.vision.available:
+            self.history.addItem("Erro: análise visual desabilitada na configuração")
+            return False
+        if not self._assistant_is_idle() or self._voice_state is not VoiceState.READY or self.vision.busy:
+            return False
+        self._visual_prompt = prompt
+        if not self.vision.start():
+            self._visual_prompt = None
+            return False
+        self._refresh_controls()
+        return True
+
+    def _on_vision_started(self) -> None:
+        if not self._closing:
+            self.status.setText("Capturando tela...")
+
+    def _on_vision_captured(self, capture) -> None:
+        if self._closing:
+            return
+        prompt = self._visual_prompt or "Descreva o que você consegue ver nesta janela."
+        self._visual_prompt = None
+        if not self._submit_text(prompt, preserve_input=bool(self.input.text().strip()), image=capture):
+            self.status.setText("IDLE")
+
+    def _on_vision_failed(self, error: str) -> None:
+        if self._closing:
+            return
+        self._visual_prompt = None
+        self.history.addItem(f"Erro: {error}")
+        self.status.setText("IDLE")
+        self._refresh_controls()
+
+    def _on_vision_finished(self, _elapsed_ms: float) -> None:
+        if not self._closing:
+            self._refresh_controls()
 
     def done(self, answer: str) -> None:
         self.history.addItem(f"Yuki: {answer}")
@@ -178,6 +241,7 @@ class Window(QWidget):
         listening = self._voice_state is VoiceState.LISTENING and self._assistant_is_idle()
         self.voice_button.setEnabled((ready or listening) and self.voice.available)
         self.wake_button.setEnabled(ready and not self._closing)
+        self.look_button.setEnabled(ready and self.vision.available and not self.vision.busy)
 
     def _voice_pressed(self) -> None:
         self.voice.press()
@@ -272,6 +336,7 @@ class Window(QWidget):
         self._voice_state = VoiceState.CLOSED
         self.voice.close()
         self.audio.close()
+        self.vision.close()
         self._refresh_controls()
 
     def closeEvent(self, event) -> None:

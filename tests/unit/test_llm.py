@@ -13,6 +13,7 @@ from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 from jarvis_local.tools.system import DISK_USAGE_TOOL, FIND_PROCESSES_TOOL, SYSTEM_STATUS_TOOL
+from jarvis_local.vision import CaptureTarget, ScreenCapture
 
 
 def client(response: httpx.Response, **config_changes) -> LLMClient:
@@ -51,6 +52,43 @@ def test_reasoning_effort_is_sent_only_when_runtime_supports_it() -> None:
     )
     llm.chat("oi", ToolRegistry())
     assert json.loads(requests[0].content)["reasoning_effort"] == "none"
+
+
+def test_multimodal_chat_uses_local_data_url_and_keeps_text_messages():
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Vejo uma janela."}}]})
+
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        capabilities_provider=lambda: SimpleNamespace(supports_vision=True),
+    )
+    item = ScreenCapture(b"png", "image/png", 10, 10, CaptureTarget.ACTIVE_WINDOW, 1.0)
+
+    assert llm.chat("O que você vê?", ToolRegistry(), image=item) == "Vejo uma janela."
+    messages = requests[0]["messages"]
+    assert messages[-1]["content"] == [
+        {"type": "text", "text": "O que você vê?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,cG5n"}},
+    ]
+    assert all(not isinstance(message.get("content"), list) for message in messages[:-1])
+
+
+def test_multimodal_chat_requires_runtime_vision_capability():
+    requests = []
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(lambda request: requests.append(request))),
+        capabilities_provider=lambda: SimpleNamespace(supports_vision=False),
+    )
+    item = ScreenCapture(b"png", "image/png", 10, 10, CaptureTarget.ACTIVE_WINDOW, 1.0)
+
+    with pytest.raises(LLMError, match="suporte a análise visual"):
+        llm.chat("O que você vê?", ToolRegistry(), image=item)
+    assert requests == []
 
 
 def test_raw_registered_tool_call_is_retried_without_execution() -> None:

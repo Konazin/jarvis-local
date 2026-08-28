@@ -79,14 +79,18 @@ class Assistant:
     def confirmation_finish(self, _request, _approved: bool) -> None:
         self._transition_if_current(State.CONFIRMING, State.THINKING)
 
-    def ask(self, text: str) -> str:
+    def ask(self, text: str, image=None) -> str:
         self._begin_ask()
         try:
             if self.runtime is not None:
                 self.runtime.ensure_ready()
             history = self.session.messages() if self.session is not None else None
+            if image is None:
+                response = self.llm.chat(text, self.tools, history=history)
+            else:
+                response = self.llm.chat(text, self.tools, history=history, image=image)
             answer = self.display_sanitizer.sanitize(
-                self.response_naturalizer.normalize(text, self.llm.chat(text, self.tools, history=history))
+                self.response_naturalizer.normalize(text, response)
             )
             if self.session is not None:
                 self.session.append_turn(text, answer)

@@ -26,6 +26,7 @@ MAX_TOOL_CALLS_PER_ROUND = 4
 MAX_TOOL_CALLS_TOTAL = 8
 MAX_USER_ESTIMATED_TOKENS = 1024
 CONTEXT_SAFETY_MARGIN_TOKENS = 64
+IMAGE_ESTIMATED_TOKENS = 512
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
 Responda em português brasileiro, de forma curta, direta e natural. Normalmente use 1–3 frases.
@@ -111,7 +112,13 @@ class LLMClient:
         """Metrics for the most recent chat, including useful partial failures."""
         return self._last_metrics
 
-    def chat(self, text: str, registry: ToolRegistry, history: Sequence[Any] | None = None) -> str:
+    def chat(
+        self,
+        text: str,
+        registry: ToolRegistry,
+        history: Sequence[Any] | None = None,
+        image: Any | None = None,
+    ) -> str:
         started_at = time.perf_counter()
         self._last_metrics = None
         request_count = 0
@@ -127,10 +134,15 @@ class LLMClient:
         requirement = self.tool_policy.evaluate(text)
         if requirement.unsupported:
             return requirement.reason or "Não consigo verificar esse estado com as ferramentas atuais."
+        image_data_url = self._image_data_url(image)
+        if image_data_url and self.capabilities_provider is not None:
+            capabilities = self.capabilities_provider()
+            if getattr(capabilities, "supports_vision", None) is not True:
+                raise LLMError("o runtime LLM não anuncia suporte a análise visual")
         freshness_retry_used = False
         freshness_satisfied = not requirement.required
         copied_history = self._copy_history(history)
-        messages = self._prepare_messages(text, registry, copied_history, requirement)
+        messages = self._prepare_messages(text, registry, copied_history, requirement, image_data_url)
         try:
             for _ in range(4):
                 request_count += 1
@@ -267,6 +279,7 @@ class LLMClient:
         registry: ToolRegistry,
         history: list[dict[str, str]],
         requirement: ToolRequirement,
+        image_data_url: str | None = None,
     ) -> list[dict[str, Any]]:
         if not isinstance(text, str):
             raise LLMError("mensagem atual invalida")
@@ -284,12 +297,31 @@ class LLMClient:
             + estimate_tokens(json.dumps(schemas, ensure_ascii=False))
             + self.config.max_tokens
             + CONTEXT_SAFETY_MARGIN_TOKENS
+            + (IMAGE_ESTIMATED_TOKENS if image_data_url is not None else 0)
         )
         if fixed_tokens > self.config.context_size:
             raise LLMError("mensagem atual excede o limite de contexto local")
         history_budget = self.config.context_size - fixed_tokens
         trimmed_history = self._trim_history(history, history_budget)
-        return [{"role": "system", "content": system}, *trimmed_history, {"role": "user", "content": text}]
+        current_content: str | list[dict[str, Any]] = text
+        if image_data_url is not None:
+            current_content = [
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]
+        return [{"role": "system", "content": system}, *trimmed_history, {"role": "user", "content": current_content}]
+
+    @staticmethod
+    def _image_data_url(image: Any | None) -> str | None:
+        if image is None:
+            return None
+        if isinstance(image, str):
+            data_url = image
+        else:
+            data_url = getattr(image, "data_url", lambda: None)()
+        if not isinstance(data_url, str) or not data_url.startswith("data:image/"):
+            raise LLMError("imagem visual deve ser uma data URL local")
+        return data_url
 
     @staticmethod
     def _trim_history(history: list[dict[str, str]], budget: int) -> list[dict[str, str]]:
@@ -309,11 +341,7 @@ class LLMClient:
             requirement.allowed_tools if requirement.required and not freshness_satisfied else None
         )
         message_tokens = sum(
-            estimate_tokens(message["content"])
-            if isinstance(message.get("content"), str)
-            else estimate_tokens(json.dumps(message, ensure_ascii=False))
-            for message in messages
-            if isinstance(message, dict)
+            self._message_estimated_tokens(message) for message in messages if isinstance(message, dict)
         )
         total = (
             message_tokens
@@ -323,6 +351,22 @@ class LLMClient:
         )
         if total > self.config.context_size:
             raise LLMError("turno excede o limite de contexto local")
+
+    @staticmethod
+    def _message_estimated_tokens(message: dict[str, Any]) -> int:
+        content = message.get("content")
+        if isinstance(content, str):
+            return estimate_tokens(content)
+        if isinstance(content, list):
+            return sum(
+                estimate_tokens(item.get("text", ""))
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+                else IMAGE_ESTIMATED_TOKENS
+                if isinstance(item, dict) and item.get("type") == "image_url"
+                else estimate_tokens(json.dumps(item, ensure_ascii=False))
+                for item in content
+            )
+        return estimate_tokens(json.dumps(message, ensure_ascii=False))
 
     def _request_payload(
         self,

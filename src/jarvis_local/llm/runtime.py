@@ -36,6 +36,7 @@ class LLMRuntimeError(RuntimeError):
 @dataclass(frozen=True)
 class RuntimeCapabilities:
     supports_tool_calls: bool | None
+    supports_vision: bool | None
     supports_parallel_tool_calls: bool | None
     supports_reasoning: bool | None
     supports_reasoning_effort: bool | None
@@ -276,6 +277,13 @@ class LLMRuntimeManager:
             raise LLMRuntimeError("capability probe /props contem model_path incompativel")
         return RuntimeCapabilities(
             supports_tool_calls=caps.get("supports_tool_calls"),
+            supports_vision=(
+                caps.get("supports_vision")
+                if isinstance(caps.get("supports_vision"), bool)
+                else payload.get("supports_vision")
+                if isinstance(payload.get("supports_vision"), bool)
+                else None
+            ),
             supports_parallel_tool_calls=caps.get("supports_parallel_tool_calls"),
             supports_reasoning=caps.get("supports_reasoning"),
             supports_reasoning_effort=caps.get("supports_reasoning_effort"),

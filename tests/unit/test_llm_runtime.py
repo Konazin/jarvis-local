@@ -12,6 +12,7 @@ CAPABILITIES = {
     "model_path": "/models/qwen.gguf",
     "chat_template_caps": {
         "supports_tool_calls": True,
+        "supports_vision": True,
         "supports_parallel_tool_calls": False,
         "supports_reasoning": True,
         "supports_reasoning_effort": True,
@@ -95,6 +96,7 @@ def test_external_health_and_props_extract_capabilities() -> None:
     assert manager.state is LLMRuntimeState.READY
     assert capabilities is not None
     assert capabilities.supports_tool_calls is True
+    assert capabilities.supports_vision is True
     assert capabilities.context_size == 4096
     assert capabilities.model_path == "/models/qwen.gguf"
     assert client.calls == [

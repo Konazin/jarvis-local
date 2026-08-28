@@ -4,12 +4,17 @@ from types import SimpleNamespace
 
 import pytest
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
+
 from jarvis_local.config import VisionConfig
 from jarvis_local.vision import (
     CaptureTarget,
     ScreenCapture,
     ScreenCaptureError,
     ScreenCaptureService,
+    VisionController,
     VisionRetention,
     VisualIntentPolicy,
 )
@@ -96,3 +101,26 @@ def test_vision_config_limits_debug_retention():
     assert VisionConfig().retention_seconds == 0
     with pytest.raises(ValueError):
         VisionConfig(retention_seconds=1801)
+
+
+def test_vision_controller_captures_off_main_thread_without_persisting_by_default():
+    app = QApplication.instance() or QApplication([])
+    events = []
+
+    class Service:
+        def capture_active_window(self):
+            return capture()
+
+    controller = VisionController(VisionConfig(enabled=True), service=Service(), retention=VisionRetention(0))
+    controller.started.connect(lambda: events.append("started"))
+    controller.captured.connect(lambda item: events.append(item))
+    controller.start()
+
+    deadline = time.monotonic() + 1
+    while len(events) < 2 and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    assert events[0] == "started"
+    assert events[1].target is CaptureTarget.ACTIVE_WINDOW
+    assert not controller.busy
+    controller.close()
