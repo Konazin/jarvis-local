@@ -169,3 +169,29 @@ def test_coordinator_emits_post_wake_recording_from_vad():
     coordinator.close()
     assert wait_until(lambda: streams[0].closed)
     app.processEvents()
+
+
+def test_coordinator_emits_suspended_only_after_stream_closes():
+    app = QApplication.instance() or QApplication([])
+    streams = []
+    suspended = []
+
+    def factory(**kwargs):
+        stream = FakeStream(**kwargs)
+        streams.append(stream)
+        return stream
+
+    coordinator = AudioCoordinator(AudioConfig(), stream_factory=factory)
+    coordinator.suspended.connect(lambda: suspended.append(True))
+    coordinator.start_wake()
+    assert wait_until(lambda: streams and streams[0].started)
+
+    assert coordinator.suspend()
+    assert wait_until(lambda: suspended == [True])
+    assert coordinator.state is AudioOwnerState.SUSPENDED
+    assert streams[0].closed
+    assert coordinator.resume()
+    assert wait_until(lambda: len(streams) == 2 and streams[1].started)
+    coordinator.close()
+    assert wait_until(lambda: streams[1].closed)
+    app.processEvents()

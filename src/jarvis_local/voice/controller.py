@@ -29,10 +29,18 @@ class VoiceWorker(QObject):
     failed = Signal(str)
     done = Signal()
 
-    def __init__(self, capture: Any, transcriber: Any) -> None:
+    def __init__(
+        self,
+        capture: Any | None,
+        transcriber: Any,
+        recording: Any | None = None,
+        emit_transcribing: bool = True,
+    ) -> None:
         super().__init__()
         self.capture = capture
         self.transcriber = transcriber
+        self.recording = recording
+        self.emit_transcribing = emit_transcribing
         self._released = threading.Event()
         self._cancelled = threading.Event()
 
@@ -47,18 +55,22 @@ class VoiceWorker(QObject):
         try:
             if self._cancelled.is_set():
                 return
-            self.capture.start()
+            if self.recording is None:
+                self.capture.start()
+                if self._cancelled.is_set():
+                    self.capture.cancel()
+                    return
+                self._released.wait()
+                if self._cancelled.is_set():
+                    self.capture.cancel()
+                    return
+                recording = self.capture.stop()
+            else:
+                recording = self.recording
             if self._cancelled.is_set():
-                self.capture.cancel()
                 return
-            self._released.wait()
-            if self._cancelled.is_set():
-                self.capture.cancel()
-                return
-            recording = self.capture.stop()
-            if self._cancelled.is_set():
-                return
-            self.transcribing.emit()
+            if self.emit_transcribing:
+                self.transcribing.emit()
             result = self.transcriber.transcribe(recording)
             if not self._cancelled.is_set():
                 self.succeeded.emit(result)
@@ -66,10 +78,11 @@ class VoiceWorker(QObject):
             if not self._cancelled.is_set():
                 self.failed.emit(str(exc))
         finally:
-            try:
-                self.capture.close()
-            except Exception:
-                pass
+            if self.capture is not None:
+                try:
+                    self.capture.close()
+                except Exception:
+                    pass
             self.done.emit()
 
 
@@ -88,6 +101,7 @@ class VoiceInteractionController(QObject):
         capture_factory: Callable[[AudioConfig], Any] = MicrophoneCapture,
         transcriber_factory: Callable[[STTConfig], Any] = WhisperTranscriber,
         can_start: Callable[[], bool] | None = None,
+        audio_coordinator: Any | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -96,10 +110,20 @@ class VoiceInteractionController(QObject):
         self._capture_factory = capture_factory
         self._transcriber_factory = transcriber_factory
         self._can_start = can_start or (lambda: True)
+        self._audio_coordinator = audio_coordinator
         self._lock = threading.Lock()
         self._state = VoiceState.READY
         self._thread: QThread | None = None
         self._worker: VoiceWorker | None = None
+        self._pending_action: str | None = None
+        self._pending_recording: Any | None = None
+        self._release_requested = False
+        self._audio_suspended = False
+        if audio_coordinator is not None:
+            audio_coordinator.suspended.connect(self._on_audio_suspended)
+            audio_failed = getattr(audio_coordinator, "failed", None)
+            if audio_failed is not None:
+                audio_failed.connect(self._on_audio_failed)
 
     @property
     def state(self) -> VoiceState:
@@ -115,11 +139,58 @@ class VoiceInteractionController(QObject):
             if self._state is not VoiceState.READY or not self.available or not self._can_start():
                 return False
             self._state = VoiceState.LISTENING
+            self._release_requested = False
+        self.listening.emit()
+        if self._suspend_audio("ptt"):
+            return True
+        return self._start_worker()
+
+    def submit_recording(self, recording: Any) -> bool:
+        """Transcribe a wake/VAD recording through the same result pipeline as PTT."""
+        with self._lock:
+            if self._state is not VoiceState.READY or not self.available or not self._can_start():
+                return False
+            self._state = VoiceState.TRANSCRIBING
+            self._pending_recording = recording
+        self.transcribing.emit()
+        if self._suspend_audio("recording"):
+            return True
+        return self._start_worker(recording)
+
+    def _suspend_audio(self, action: str) -> bool:
+        coordinator = self._audio_coordinator
+        if coordinator is None:
+            return False
+        state = coordinator.state
+        if state.value not in {"WAKE_LISTENING", "POST_WAKE_RECORDING", "SUSPENDED"}:
+            return False
+        with self._lock:
+            self._pending_action = action
+            self._audio_suspended = True
+        if not coordinator.suspend():
+            with self._lock:
+                self._pending_action = None
+                self._audio_suspended = False
+            return False
+        return True
+
+    def _start_worker(self, recording: Any | None = None) -> bool:
         capture = None
         try:
-            capture = self._capture_factory(self.audio_config)
+            with self._lock:
+                if self._state is VoiceState.CLOSED:
+                    return False
+                action = self._pending_action
+                if recording is None and action == "recording":
+                    recording = self._pending_recording
+                self._pending_action = None
+                self._pending_recording = None
+                release_requested = self._release_requested
+                self._release_requested = False
+            if recording is None:
+                capture = self._capture_factory(self.audio_config)
             transcriber = self._transcriber_factory(self.stt_config)
-            worker = VoiceWorker(capture, transcriber)
+            worker = VoiceWorker(capture, transcriber, recording, emit_transcribing=recording is None)
             thread = QThread(self)
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
@@ -133,8 +204,9 @@ class VoiceInteractionController(QObject):
             with self._lock:
                 self._worker = worker
                 self._thread = thread
-            self.listening.emit()
             thread.start()
+            if release_requested:
+                worker.request_release()
             return True
         except Exception as exc:
             if capture is not None:
@@ -144,14 +216,26 @@ class VoiceInteractionController(QObject):
                     pass
             with self._lock:
                 self._state = VoiceState.READY
+                self._pending_action = None
+                self._pending_recording = None
             self.failed.emit(str(exc))
+            self.resume_audio()
             return False
 
     def release(self) -> None:
         with self._lock:
             worker = self._worker if self._state is VoiceState.LISTENING else None
+            if worker is None and self._state is VoiceState.LISTENING:
+                self._release_requested = True
         if worker is not None:
             worker.request_release()
+
+    def resume_audio(self) -> None:
+        with self._lock:
+            should_resume = self._audio_suspended
+            self._audio_suspended = False
+        if should_resume and self._audio_coordinator is not None:
+            self._audio_coordinator.resume()
 
     def close(self) -> None:
         with self._lock:
@@ -159,8 +243,30 @@ class VoiceInteractionController(QObject):
                 return
             self._state = VoiceState.CLOSED
             worker = self._worker
+            self._pending_action = None
+            self._pending_recording = None
         if worker is not None:
             worker.request_cancel()
+
+    def _on_audio_suspended(self) -> None:
+        with self._lock:
+            action = self._pending_action
+            if action is None or self._state is VoiceState.CLOSED:
+                return
+        if action == "ptt":
+            self._start_worker()
+        else:
+            self._start_worker(self._pending_recording)
+
+    def _on_audio_failed(self, error: str) -> None:
+        with self._lock:
+            if self._pending_action is None or self._state is VoiceState.CLOSED:
+                return
+            self._pending_action = None
+            self._pending_recording = None
+            self._audio_suspended = False
+            self._state = VoiceState.READY
+        self.failed.emit(error)
 
     def _on_transcribing(self) -> None:
         with self._lock:

@@ -166,6 +166,7 @@ class AudioCoordinator(QObject):
     wake_detected = Signal(float)
     vad_state = Signal(str)
     utterance_ready = Signal(object)
+    suspended = Signal()
     failed = Signal(str)
 
     def __init__(
@@ -221,22 +222,33 @@ class AudioCoordinator(QObject):
     def stop_wake(self) -> None:
         with self._lock:
             self._wanted = False
-            if self._state is AudioOwnerState.WAKE_LISTENING:
+            if self._state in {AudioOwnerState.WAKE_LISTENING, AudioOwnerState.POST_WAKE_RECORDING}:
                 self._state = AudioOwnerState.OFF
             worker = self._worker
         if worker is not None:
             worker.request_stop()
         self.state_changed.emit(self.state.value)
 
-    def suspend(self) -> None:
+    def suspend(self) -> bool:
         with self._lock:
-            if self._state is not AudioOwnerState.WAKE_LISTENING:
-                return
-            self._state = AudioOwnerState.SUSPENDED
-            worker = self._worker
+            if self._state is AudioOwnerState.CLOSED:
+                return False
+            if self._state is AudioOwnerState.SUSPENDED:
+                ready = self._thread is None
+                worker = None
+            elif self._state not in {AudioOwnerState.WAKE_LISTENING, AudioOwnerState.POST_WAKE_RECORDING}:
+                return False
+            else:
+                ready = False
+                self._wanted = False
+                self._state = AudioOwnerState.SUSPENDED
+                worker = self._worker
         if worker is not None:
             worker.request_stop()
         self.state_changed.emit(AudioOwnerState.SUSPENDED.value)
+        if ready:
+            self.suspended.emit()
+        return True
 
     def resume(self) -> bool:
         with self._lock:
@@ -317,5 +329,8 @@ class AudioCoordinator(QObject):
             self._worker = None
             self._thread = None
             restart = self._wanted and self._state is AudioOwnerState.WAKE_LISTENING
+            is_suspended = self._state is AudioOwnerState.SUSPENDED
             if restart:
                 self._start_stream_locked()
+        if is_suspended:
+            self.suspended.emit()

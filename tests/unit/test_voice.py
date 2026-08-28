@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
-from jarvis_local.audio import AudioRecording
+from jarvis_local.audio import AudioOwnerState, AudioRecording
 from jarvis_local.config import AudioConfig, STTConfig
 from jarvis_local.stt import TranscriptionResult
 from jarvis_local.ui.window import Window
@@ -66,6 +66,27 @@ class FakeTranscriber:
         return self.result
 
 
+class FakeAudioCoordinator(QObject):
+    suspended = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.state = AudioOwnerState.WAKE_LISTENING
+        self.suspend_count = 0
+        self.resume_count = 0
+
+    def suspend(self):
+        self.suspend_count += 1
+        self.state = AudioOwnerState.SUSPENDED
+        self.suspended.emit()
+        return True
+
+    def resume(self):
+        self.resume_count += 1
+        self.state = AudioOwnerState.WAKE_LISTENING
+        return True
+
+
 class FakeVoiceController(QObject):
     listening = Signal()
     transcribing = Signal()
@@ -77,6 +98,8 @@ class FakeVoiceController(QObject):
         self.available = True
         self.press_count = 0
         self.release_count = 0
+        self.recordings = []
+        self.resume_count = 0
         self.closed = False
 
     def press(self):
@@ -86,6 +109,13 @@ class FakeVoiceController(QObject):
 
     def release(self):
         self.release_count += 1
+
+    def submit_recording(self, recording):
+        self.recordings.append(recording)
+        return True
+
+    def resume_audio(self):
+        self.resume_count += 1
 
     def close(self):
         self.closed = True
@@ -140,6 +170,10 @@ def make_controller(capture, transcriber, **changes):
         transcriber_factory=lambda _config: transcriber,
         **changes,
     )
+
+
+def make_coordinated_controller(capture, transcriber, coordinator):
+    return make_controller(capture, transcriber, audio_coordinator=coordinator)
 
 
 def test_worker_keeps_start_stop_transcribe_order():
@@ -235,6 +269,37 @@ def test_controller_close_cancels_listening_without_transcription():
     assert wait_until(lambda: not thread.isRunning())
 
 
+def test_ptt_suspends_wake_before_opening_microphone():
+    events = []
+    coordinator = FakeAudioCoordinator()
+    capture = FakeCapture(events)
+    controller = make_coordinated_controller(capture, FakeTranscriber(events), coordinator)
+
+    assert controller.press()
+    assert wait_until(capture.started.is_set)
+    assert coordinator.suspend_count == 1
+    controller.release()
+    assert wait_until(lambda: "transcribe" in events)
+    assert coordinator.state is AudioOwnerState.SUSPENDED
+    controller.resume_audio()
+    assert coordinator.resume_count == 1
+    cleanup_controller(controller)
+
+
+def test_wake_recording_uses_transcriber_without_second_microphone_stream():
+    events = []
+    coordinator = FakeAudioCoordinator()
+    controller = make_coordinated_controller(FakeCapture(events), FakeTranscriber(events), coordinator)
+    results = []
+    controller.succeeded.connect(results.append)
+
+    assert controller.submit_recording(recording())
+    assert wait_until(lambda: len(results) == 1)
+    assert events == ["transcribe"]
+    assert coordinator.suspend_count == 1
+    cleanup_controller(controller)
+
+
 def test_window_voice_button_is_ready_and_available():
     window, _assistant, voice = make_window()
 
@@ -296,6 +361,17 @@ def test_window_empty_transcript_does_not_submit_or_replace_input():
     assert assistant.calls == []
     assert window.input.text() == "texto anterior"
     assert window.status.text() == "IDLE"
+    cleanup_window(window)
+
+
+def test_window_routes_wake_recording_to_voice_controller():
+    window, _assistant, voice = make_window()
+    wake_recording = recording()
+
+    window._on_wake_detected(0.9)
+    window._on_utterance_ready(wake_recording)
+
+    assert voice.recordings == [wake_recording]
     cleanup_window(window)
 
 

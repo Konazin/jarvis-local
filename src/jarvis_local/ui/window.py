@@ -77,6 +77,7 @@ class Window(QWidget):
             audio_config or AudioConfig(),
             stt_config or STTConfig(),
             can_start=self._assistant_is_idle,
+            audio_coordinator=self.audio,
             parent=self,
         )
         self.voice.listening.connect(self._on_voice_listening)
@@ -104,6 +105,7 @@ class Window(QWidget):
         self.wake_button.clicked.connect(self._toggle_wake)
         self.audio.state_changed.connect(self._on_audio_state_changed)
         self.audio.wake_detected.connect(self._on_wake_detected)
+        self.audio.utterance_ready.connect(self._on_utterance_ready)
         self.audio.failed.connect(self._on_audio_failed)
 
         row = QHBoxLayout()
@@ -156,6 +158,8 @@ class Window(QWidget):
         self._assistant_state = state
         if self._voice_state is VoiceState.READY:
             self.status.setText(state)
+        if state == "IDLE":
+            self._resume_audio()
         self._refresh_controls()
 
     def _assistant_is_idle(self) -> bool:
@@ -173,19 +177,20 @@ class Window(QWidget):
         self.send.setEnabled(ready)
         listening = self._voice_state is VoiceState.LISTENING and self._assistant_is_idle()
         self.voice_button.setEnabled((ready or listening) and self.voice.available)
+        self.wake_button.setEnabled(ready and not self._closing)
 
     def _voice_pressed(self) -> None:
         self.voice.press()
 
     def _toggle_wake(self) -> None:
-        if self.audio.state is AudioOwnerState.WAKE_LISTENING:
+        if self.audio.state in {AudioOwnerState.WAKE_LISTENING, AudioOwnerState.POST_WAKE_RECORDING}:
             self.audio.stop_wake()
             return
         if self.audio.start_wake():
             self.wake_button.setText("Wake: ON")
 
     def _on_audio_state_changed(self, state: str) -> None:
-        if state == AudioOwnerState.WAKE_LISTENING.value:
+        if state in {AudioOwnerState.WAKE_LISTENING.value, AudioOwnerState.POST_WAKE_RECORDING.value}:
             self.wake_button.setText("Wake: ON")
         elif state in {AudioOwnerState.OFF.value, AudioOwnerState.SUSPENDED.value, AudioOwnerState.CLOSED.value}:
             self.wake_button.setText("Wake: OFF")
@@ -197,6 +202,13 @@ class Window(QWidget):
     def _on_wake_detected(self, score: float) -> None:
         if not self._closing and self._assistant_is_idle():
             self.status.setText("Yuki ouviu")
+
+    def _on_utterance_ready(self, recording) -> None:
+        if self._closing:
+            return
+        submit_recording = getattr(self.voice, "submit_recording", None)
+        if submit_recording is None or not submit_recording(recording):
+            self.status.setText("IDLE")
 
     def _voice_released(self) -> None:
         self.voice.release()
@@ -228,9 +240,11 @@ class Window(QWidget):
         text = result.text.strip()
         if not text:
             self.status.setText("IDLE")
+            self._resume_audio()
             return
         self.input.setText(text)
-        self._submit_text(text, preserve_input=True)
+        if not self._submit_text(text, preserve_input=True):
+            self._resume_audio()
 
     def _on_voice_failed(self, error: str) -> None:
         if self._closing:
@@ -238,6 +252,12 @@ class Window(QWidget):
         self._set_voice_ready()
         self.history.addItem(f"Erro: {error}")
         self.status.setText("IDLE")
+        self._resume_audio()
+
+    def _resume_audio(self) -> None:
+        resume_audio = getattr(self.voice, "resume_audio", None)
+        if resume_audio is not None:
+            resume_audio()
 
     def _set_voice_ready(self) -> None:
         self._voice_state = VoiceState.READY
