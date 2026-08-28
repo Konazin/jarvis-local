@@ -153,6 +153,23 @@ class VADConfig:
 
 
 @dataclass(frozen=True)
+class VisionConfig:
+    enabled: bool = False
+    retention_seconds: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("vision.enabled deve ser booleano")
+        if (
+            isinstance(self.retention_seconds, bool)
+            or not isinstance(self.retention_seconds, (int, float))
+            or not math.isfinite(self.retention_seconds)
+            or not 0 <= self.retention_seconds <= 1800
+        ):
+            raise ValueError("vision.retention_seconds deve estar entre 0 e 1800")
+
+
+@dataclass(frozen=True)
 class STTConfig:
     enabled: bool = True
     engine: str = "whisper.cpp"
@@ -213,6 +230,7 @@ class Config:
     audio: AudioConfig = AudioConfig()
     wake: WakeConfig = WakeConfig()
     vad: VADConfig = VADConfig()
+    vision: VisionConfig = VisionConfig()
     stt: STTConfig = STTConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
 
@@ -275,6 +293,7 @@ def load_config(path: str | Path | None = None) -> Config:
         AudioConfig(**_section(data, "audio")),
         WakeConfig(**_section(data, "wake")),
         VADConfig(**_section(data, "vad")),
+        VisionConfig(**_section(data, "vision")),
         STTConfig(**_section(data, "stt")),
         _applications(data),
     )

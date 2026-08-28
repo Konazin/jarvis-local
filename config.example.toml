@@ -59,6 +59,11 @@ max_utterance_seconds = 15.0
 min_speech_seconds = 0.25
 energy_threshold = 500
 
+[vision]
+enabled = false
+# 0 não grava capturas; o máximo permitido é 1800 segundos.
+retention_seconds = 0
+
 [stt]
 enabled = true
 engine = "whisper.cpp"

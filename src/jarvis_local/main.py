@@ -45,7 +45,14 @@ def main() -> None:
     assistant = Assistant(llm, tools, tts, runtime=runtime, session=session)
     llm.on_tool_start, llm.on_tool_finish = assistant.tool_start, assistant.tool_finish
     llm.on_confirmation_start, llm.on_confirmation_finish = assistant.confirmation_start, assistant.confirmation_finish
-    window = Window(assistant, config.audio, config.stt, wake_config=config.wake, vad_config=config.vad)
+    window = Window(
+        assistant,
+        config.audio,
+        config.stt,
+        wake_config=config.wake,
+        vad_config=config.vad,
+        vision_config=config.vision,
+    )
 
     def quit_app() -> None:
         window.shutdown()
