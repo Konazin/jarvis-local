@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
+from jarvis_local.audio import AudioOwnerState
 from jarvis_local.config import DebugConfig
 from jarvis_local.ui.window import Window
 
@@ -33,6 +34,36 @@ class FakeVisionController(QObject):
 
     def close(self):
         self.busy = False
+
+
+class FakeAudioCoordinator(QObject):
+    state_changed = Signal(str)
+    wake_detected = Signal(float)
+    vad_state = Signal(str)
+    utterance_ready = Signal(object)
+    failed = Signal(str)
+    suspended = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.state = AudioOwnerState.WAKE_LISTENING
+        self.suspend_count = 0
+        self.resume_count = 0
+
+    def suspend(self):
+        self.suspend_count += 1
+        self.state = AudioOwnerState.SUSPENDED
+        self.state_changed.emit(AudioOwnerState.SUSPENDED.value)
+        return True
+
+    def resume(self):
+        self.resume_count += 1
+        self.state = AudioOwnerState.WAKE_LISTENING
+        self.state_changed.emit(AudioOwnerState.WAKE_LISTENING.value)
+        return True
+
+    def close(self):
+        self.state = AudioOwnerState.CLOSED
 
 
 def test_window_initializes_with_status_before_signal_connection() -> None:
@@ -81,6 +112,24 @@ def test_perception_debug_label_is_opt_in():
     assert "Wake: ON" in window.debug_label.text()
     assert "score: 0.75" in window.debug_label.text()
     assert "VAD: SPEAKING" in window.debug_label.text()
+    window.shutdown()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_text_assistant_state_suspends_wake_until_idle():
+    app = QApplication.instance() or QApplication([])
+    audio = FakeAudioCoordinator()
+    window = Window(FakeAssistant(), audio_coordinator=audio)
+
+    window._on_state_changed("THINKING")
+    assert audio.suspend_count == 1
+    assert audio.state is AudioOwnerState.SUSPENDED
+    window._on_state_changed("SPEAKING")
+    assert audio.suspend_count == 1
+    window._on_state_changed("IDLE")
+    assert audio.resume_count == 1
+    assert audio.state is AudioOwnerState.WAKE_LISTENING
     window.shutdown()
     window.deleteLater()
     app.processEvents()

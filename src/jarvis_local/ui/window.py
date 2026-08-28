@@ -242,6 +242,8 @@ class Window(QWidget):
             self.status.setText(state)
         if state == "IDLE":
             self._resume_audio()
+        elif self.audio.state in {AudioOwnerState.WAKE_LISTENING, AudioOwnerState.POST_WAKE_RECORDING}:
+            self.audio.suspend()
         self._refresh_controls()
 
     def _assistant_is_idle(self) -> bool:
@@ -359,6 +361,8 @@ class Window(QWidget):
         resume_audio = getattr(self.voice, "resume_audio", None)
         if resume_audio is not None:
             resume_audio()
+        if self.audio.state is AudioOwnerState.SUSPENDED:
+            self.audio.resume()
 
     def _refresh_debug(self) -> None:
         self.debug_label.setText(
