@@ -33,6 +33,7 @@ def test_normal_response_sends_non_thinking_controls() -> None:
     payload = json.loads(requests[0].content)
     assert [message["role"] for message in payload["messages"]] == ["system", "user"]
     assert "/no_think" in payload["messages"][0]["content"]
+    assert "OBSERVAÇÃO VISUAL parcial" in payload["messages"][0]["content"]
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert "reasoning_effort" not in payload
 

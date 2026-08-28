@@ -44,6 +44,8 @@ Os aplicativos que a Yuki pode abrir precisam ser cadastrados na seção `[appli
 
 A Yuki também lista aplicativos configurados em execução e pode solicitar seu fechamento, sempre com confirmação. O fechamento compara nomes de processo exatos definidos em `process_names`; não há encerramento arbitrário por PID, shell ou comando externo.
 
+O pacote desktop também oferece consulta da janela ativa no X11, volume/mute, controles de mídia e interfaces de rede. `wpctl`, `playerctl` e `xprop` são capacidades opcionais: quando ausentes, a tool retorna indisponibilidade estruturada. Wayland não é tratado como se fosse X11.
+
 ### Resposta e voz
 
 Respostas técnicas são humanizadas de forma determinística depois do LLM; valores exatos permanecem preservados quando solicitados. O texto visual é salvo na sessão, enquanto o TTS recebe uma versão própria, com decimais e unidades escritos para fala. O Kokoro permanece residente normalmente, faz preload em background e pode ser descarregado sob pressão de memória.
@@ -69,6 +71,18 @@ O primeiro comando testa somente a captura; o segundo requer `whisper.cpp` e o m
 
 Segure `Falar`, fale, solte e a Yuki transcreverá localmente antes de enviar o texto pelo fluxo normal do `Assistant`. Requer `whisper.cpp`, um modelo multilingual local (recomendação inicial: `ggml-small.bin`) e a configuração `[stt]`; não há suporte bilíngue automático nesta etapa.
 
+### Wake, VAD e ciclo de áudio
+
+`Wake: OFF` é o padrão. Quando ativado, um único stream PCM16 mono a 16 kHz alimenta o detector local e um pre-roll de 400 ms; Whisper só roda depois de uma detecção. O VAD local por energia espera até 5 segundos pelo início, encerra após 0,8 segundo de silêncio e limita cada utterance a 15 segundos. PTT suspende o stream Wake antes de abrir seu próprio capture; durante STT, Assistant e TTS o stream continua suspenso e só retorna a `WAKE_LISTENING` quando o Assistant volta a `IDLE`.
+
+O backend de wake é opcional e configurado em `[wake]`, sem download automático de modelo. A implementação usa a API `openwakeword` quando esse pacote/backend está disponível; ele não foi adicionado ao lock padrão porque a resolução desta instalação Python 3.12 não encontrou wheel compatível para seu runtime TFLite. O restante do aplicativo continua instalável e o erro de backend fica explícito ao ligar Wake.
+
+### Percepção visual
+
+`vision.enabled = false` mantém a visão desligada por padrão. O botão `Olhar` e intents explícitos como “o que você vê” capturam somente a janela ativa via X11, em PNG na memória, e enviam texto mais imagem ao mesmo llama-server quando `/props` anuncia `supports_vision = true`. A `ConversationSession` nunca recebe bytes ou base64. Wayland retorna indisponibilidade clara; retenção de debug é opcional, fica em cache XDG e expira em no máximo 1800 segundos.
+
+Wake/VAD são leves e transitórios; Whisper e captura visual não ficam residentes. O llama-server e o Kokoro seguem sendo os componentes residentes já existentes. Não há benchmark de hardware embutido nesta etapa.
+
 ### Contexto da sessão
 
 O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.
@@ -89,5 +103,5 @@ Runtime oficial: Kokoro 82M, voz `pf_dora`, `lang_code = "p"`, velocidade 1.0.
 ## Roadmap
 
 - v0.1: texto → LLM → tools → TTS
-- STT, VAD e wake word
-- mais tools e memória/contexto
+- v0.2: PTT, VAD, wake word, controle desktop e percepção visual multimodal
+- extensões futuras: modelo customizado “Ei Yuki”, captura Wayland e streaming STT

@@ -63,6 +63,11 @@ Só use tools de ação quando houver intenção clara de executar a ação.
 
 Um resultado de tool é um fato atual do sistema; uma observação visual é parcial; conhecimento do modelo não é
 estado atual da máquina. Não confunda essas origens e diga claramente quando uma capacidade não estiver disponível.
+Quando receber uma imagem, trate-a somente como OBSERVAÇÃO VISUAL parcial: diga "consigo ver" quando apropriado,
+não afirme que elementos ocultos existem e não transforme o que aparece na tela em estado interno exato do aplicativo.
+Uma captura com seis abas permite dizer que você consegue ver seis abas, mas não que existem exatamente seis abas.
+O contexto da conversa pode guardar preferências e frases anteriores, mas fatos antigos não substituem uma tool ou
+uma observação atual do sistema.
 """
 
 
