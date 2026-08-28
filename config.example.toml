@@ -48,10 +48,11 @@ max_recording_seconds = 30.0
 enabled = true
 engine = "whisper.cpp"
 binary = "whisper-cli"
-model_path = "models/whisper/ggml-base.bin"
+model_path = "models/whisper/ggml-small.bin"
 language = "pt"
 threads = 4
 timeout_seconds = 30.0
+initial_prompt = "Yuki é uma assistente de computador. Termos comuns: memória RAM, CPU, GPU, processos, megabytes, gigabytes, Firefox, Discord, Spotify e VS Code."
 
 # Exemplos: altere ou remova conforme os aplicativos instalados.
 [applications.firefox]

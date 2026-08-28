@@ -95,6 +95,16 @@ def test_command_contains_supported_flags(tmp_path):
     assert command[command.index("-l") + 1] == "pt"
     assert command[command.index("-t") + 1] == "6"
     assert {"-otxt", "-of", "-np", "-nt"}.issubset(command)
+    assert "--prompt" not in command
+
+
+def test_command_includes_configured_initial_prompt(tmp_path):
+    config = configured(tmp_path, initial_prompt="Yuki, memória RAM e CPU")
+    transcriber = WhisperTranscriber(config)
+
+    command = transcriber._build_command(tmp_path / "input.wav", tmp_path / "result")
+
+    assert command[command.index("--prompt") + 1] == "Yuki, memória RAM e CPU"
 
 
 @pytest.mark.parametrize(

@@ -16,7 +16,8 @@ def test_defaults() -> None:
     assert config.audio.input_device == "default"
     assert config.audio.max_recording_seconds == 30.0
     assert config.stt.engine == "whisper.cpp"
-    assert config.stt.model_path == "models/whisper/ggml-base.bin"
+    assert config.stt.model_path == "models/whisper/ggml-small.bin"
+    assert config.stt.initial_prompt == ""
 
 
 @pytest.mark.parametrize(
@@ -84,6 +85,7 @@ def test_custom_stt_config(tmp_path) -> None:
     path.write_text(
         '[stt]\nenabled = false\nengine = "whisper.cpp"\nbinary = "/opt/whisper-cli"\n'
         'model_path = "/models/ggml-base.bin"\nlanguage = "pt"\nthreads = 8\ntimeout_seconds = 12.5\n'
+        'initial_prompt = "Yuki, memória RAM"\n'
     )
 
     config = load_config(path)
@@ -93,6 +95,7 @@ def test_custom_stt_config(tmp_path) -> None:
     assert config.stt.model_path == "/models/ggml-base.bin"
     assert config.stt.threads == 8
     assert config.stt.timeout_seconds == 12.5
+    assert config.stt.initial_prompt == "Yuki, memória RAM"
 
 
 def test_application_config_is_dynamic_and_defensive(tmp_path) -> None:

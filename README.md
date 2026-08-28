@@ -50,11 +50,11 @@ Respostas técnicas são humanizadas de forma determinística depois do LLM; val
 
 ### Microphone capture foundation
 
-A captura de microfone é local e fica somente em memória, em PCM signed 16-bit mono a 16 kHz, sem persistência ou envio de áudio. Ela ainda não está integrada ao STT nem à interface; a próxima etapa será a transcrição com whisper.cpp.
+A captura de microfone é local e fica somente em memória, em PCM signed 16-bit mono a 16 kHz, sem persistência ou envio de áudio. A interface push-to-talk usa essa captura como entrada para a transcrição local.
 
 ### STT foundation
 
-`AudioRecording` → `WhisperTranscriber` → `whisper.cpp` → `TranscriptionResult`. A transcrição é local e one-shot, usando um `whisper-cli` configurado em `[stt]` e um modelo Whisper base multilingual fornecido localmente. O modelo não é baixado automaticamente; o áudio usa somente um WAV temporário, removido ao fim da operação, e ainda não há UI, wake word ou integração com `Assistant`.
+`AudioRecording` → `WhisperTranscriber` → `whisper.cpp` → `TranscriptionResult`. A transcrição é local e one-shot, usando um `whisper-cli` configurado em `[stt]` e um modelo Whisper small multilingual fornecido localmente. O modelo não é baixado automaticamente; o áudio usa somente um WAV temporário, removido ao fim da operação.
 
 Validação manual:
 
@@ -64,6 +64,10 @@ uv run python tests/manual/whisper_transcription.py --seconds 4
 ```
 
 O primeiro comando testa somente a captura; o segundo requer `whisper.cpp` e o modelo configurados localmente.
+
+### Push-to-talk
+
+Segure `Falar`, fale, solte e a Yuki transcreverá localmente antes de enviar o texto pelo fluxo normal do `Assistant`. Requer `whisper.cpp`, um modelo multilingual local (recomendação inicial: `ggml-small.bin`) e a configuração `[stt]`; não há suporte bilíngue automático nesta etapa.
 
 ### Contexto da sessão
 

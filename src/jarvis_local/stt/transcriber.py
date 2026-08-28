@@ -128,7 +128,7 @@ class WhisperTranscriber:
             str(output_base),
             "-np",
             "-nt",
-        ]
+        ] + (["--prompt", self.config.initial_prompt] if self.config.initial_prompt else [])
 
     def _resolve_binary(self) -> str:
         if self._binary is not None:

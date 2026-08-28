@@ -42,8 +42,13 @@ def main() -> None:
     assistant = Assistant(llm, tools, tts, runtime=runtime, session=session)
     llm.on_tool_start, llm.on_tool_finish = assistant.tool_start, assistant.tool_finish
     llm.on_confirmation_start, llm.on_confirmation_finish = assistant.confirmation_start, assistant.confirmation_finish
-    window = Window(assistant)
-    tray = Tray(window, tts, app.quit)
+    window = Window(assistant, config.audio, config.stt)
+
+    def quit_app() -> None:
+        window.shutdown()
+        app.quit()
+
+    tray = Tray(window, tts, quit_app)
     app.setQuitOnLastWindowClosed(not tray.available)
     if tray.available:
         tray.show()
@@ -52,6 +57,7 @@ def main() -> None:
     try:
         exit_code = app.exec()
     finally:
+        window.shutdown()
         confirmation.close()
         tts.close()
         runtime.close()

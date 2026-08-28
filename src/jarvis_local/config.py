@@ -87,10 +87,11 @@ class STTConfig:
     enabled: bool = True
     engine: str = "whisper.cpp"
     binary: str = "whisper-cli"
-    model_path: str = "models/whisper/ggml-base.bin"
+    model_path: str = "models/whisper/ggml-small.bin"
     language: str = "pt"
     threads: int = 4
     timeout_seconds: float = 30.0
+    initial_prompt: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -100,6 +101,8 @@ class STTConfig:
         for name, value in (("binary", self.binary), ("model_path", self.model_path), ("language", self.language)):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"stt.{name} não pode ser vazio")
+        if not isinstance(self.initial_prompt, str):
+            raise ValueError("stt.initial_prompt deve ser texto")
         if isinstance(self.threads, bool) or not isinstance(self.threads, int) or self.threads < 1:
             raise ValueError("stt.threads deve ser um inteiro positivo")
         if (
