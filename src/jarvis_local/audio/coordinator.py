@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections import deque
@@ -12,6 +13,8 @@ from typing import Any
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 
 from .capture import CHANNELS, DTYPE, SAMPLE_RATE, SAMPLE_WIDTH, _device_value
+
+log = logging.getLogger(__name__)
 
 
 class AudioOwnerState(StrEnum):
@@ -82,6 +85,7 @@ class AudioStreamWorker(QObject):
         self._detector_error = False
         self._last_detection = 0.0
         self._utterance: Any | None = None
+        self._last_vad_state: str | None = None
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -123,7 +127,7 @@ class AudioStreamWorker(QObject):
         if self._utterance is not None:
             try:
                 recording = self._utterance.feed(chunk)
-                self.vad_state.emit(self._utterance.state.value)
+                self._emit_vad_state()
             except Exception as exc:
                 self.failed.emit(str(exc))
                 self._stop.set()
@@ -144,18 +148,27 @@ class AudioStreamWorker(QObject):
                 self._stop.set()
                 return
             now = time.monotonic()
+            log.debug("wake score=%.3f threshold=%.3f", score, self.threshold)
             if score >= self.threshold and now - self._last_detection >= self.cooldown_seconds:
                 self._last_detection = now
+                log.info("wake detected score=%.3f", score)
                 self.wake_detected.emit(score)
                 if self.utterance_factory is not None:
                     try:
                         self._utterance = self.utterance_factory(self.ring_buffer.read())
-                        self.vad_state.emit(self._utterance.state.value)
+                        self._emit_vad_state()
                     except Exception as exc:
                         self.failed.emit(str(exc))
                         self._stop.set()
                         return
         self.chunk.emit(chunk)
+
+    def _emit_vad_state(self) -> None:
+        state = self._utterance.state.value
+        if state != self._last_vad_state:
+            self._last_vad_state = state
+            log.debug("vad state=%s", state)
+        self.vad_state.emit(state)
 
 
 class AudioCoordinator(QObject):

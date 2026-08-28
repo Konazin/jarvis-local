@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
+from jarvis_local.config import DebugConfig
 from jarvis_local.ui.window import Window
 
 
@@ -64,6 +65,22 @@ def test_window_look_button_starts_explicit_visual_capture():
 
     assert vision.start_count == 1
     assert window.status.text() == "Capturando tela..."
+    window.shutdown()
+    window.deleteLater()
+    app.processEvents()
+
+
+def test_perception_debug_label_is_opt_in():
+    app = QApplication.instance() or QApplication([])
+    window = Window(FakeAssistant(), debug_config=DebugConfig(perception=True))
+
+    assert not window.debug_label.isHidden()
+    window._on_audio_state_changed("WAKE_LISTENING")
+    window._on_wake_detected(0.75)
+    window._on_vad_state("SPEAKING")
+    assert "Wake: ON" in window.debug_label.text()
+    assert "score: 0.75" in window.debug_label.text()
+    assert "VAD: SPEAKING" in window.debug_label.text()
     window.shutdown()
     window.deleteLater()
     app.processEvents()

@@ -52,6 +52,7 @@ def main() -> None:
         wake_config=config.wake,
         vad_config=config.vad,
         vision_config=config.vision,
+        debug_config=config.debug,
     )
 
     def quit_app() -> None:

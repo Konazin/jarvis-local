@@ -61,6 +61,15 @@ class PerformanceConfig:
 
 
 @dataclass(frozen=True)
+class DebugConfig:
+    perception: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.perception, bool):
+            raise ValueError("debug.perception deve ser booleano")
+
+
+@dataclass(frozen=True)
 class AudioConfig:
     output_device: str = "default"
     input_device: str | int = "default"
@@ -227,6 +236,7 @@ class Config:
     conversation: ConversationConfig = ConversationConfig()
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
+    debug: DebugConfig = DebugConfig()
     audio: AudioConfig = AudioConfig()
     wake: WakeConfig = WakeConfig()
     vad: VADConfig = VADConfig()
@@ -290,6 +300,7 @@ def load_config(path: str | Path | None = None) -> Config:
         ConversationConfig(**_section(data, "conversation")),
         TTSConfig(**_section(data, "tts")),
         PerformanceConfig(**_section(data, "performance")),
+        DebugConfig(**_section(data, "debug")),
         AudioConfig(**_section(data, "audio")),
         WakeConfig(**_section(data, "wake")),
         VADConfig(**_section(data, "vad")),

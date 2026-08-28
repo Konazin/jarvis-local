@@ -17,7 +17,7 @@ from jarvis_local.core.assistant import Assistant
 from jarvis_local.vision import VisionController, VisualIntentPolicy
 from jarvis_local.voice import VADUtterance, VoiceInteractionController, VoiceState, WakeWordDetector
 
-from ..config import AudioConfig, STTConfig, VADConfig, VisionConfig, WakeConfig
+from ..config import AudioConfig, DebugConfig, STTConfig, VADConfig, VisionConfig, WakeConfig
 
 
 class AskWorker(QObject):
@@ -54,6 +54,7 @@ class Window(QWidget):
         audio_coordinator: AudioCoordinator | None = None,
         vision_config: VisionConfig | None = None,
         vision_controller: VisionController | None = None,
+        debug_config: DebugConfig | None = None,
     ) -> None:
         super().__init__()
 
@@ -61,6 +62,15 @@ class Window(QWidget):
         self._assistant_state = "IDLE"
         self._voice_state = VoiceState.READY
         self._closing = False
+        self._debug_enabled = bool((debug_config or DebugConfig()).perception)
+        self._debug_values = {
+            "wake": "OFF",
+            "score": "-",
+            "mic": "OFF",
+            "vad": "-",
+            "stt": "-",
+            "vision": "-",
+        }
         selected_wake = wake_config or WakeConfig()
         selected_vad = vad_config or VADConfig()
         self.vision = vision_controller or VisionController(vision_config or VisionConfig(), parent=self)
@@ -80,6 +90,9 @@ class Window(QWidget):
         self.resize(480, 360)
 
         self.status = QLabel("IDLE")
+        self.debug_label = QLabel()
+        self.debug_label.setVisible(self._debug_enabled)
+        self._refresh_debug()
         self.history = QListWidget()
         self.input = QLineEdit()
 
@@ -115,6 +128,7 @@ class Window(QWidget):
         self.wake_button.clicked.connect(self._toggle_wake)
         self.audio.state_changed.connect(self._on_audio_state_changed)
         self.audio.wake_detected.connect(self._on_wake_detected)
+        self.audio.vad_state.connect(self._on_vad_state)
         self.audio.utterance_ready.connect(self._on_utterance_ready)
         self.audio.failed.connect(self._on_audio_failed)
         self.vision.started.connect(self._on_vision_started)
@@ -134,6 +148,7 @@ class Window(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.status)
+        layout.addWidget(self.debug_label)
         layout.addWidget(self.history)
         layout.addLayout(row)
         self._refresh_controls()
@@ -196,6 +211,8 @@ class Window(QWidget):
             return
         prompt = self._visual_prompt or "Descreva o que você consegue ver nesta janela."
         self._visual_prompt = None
+        self._debug_values["vision"] = f"{getattr(capture, 'target', '-')}"
+        self._refresh_debug()
         if not self._submit_text(prompt, preserve_input=bool(self.input.text().strip()), image=capture):
             self.status.setText("IDLE")
 
@@ -208,6 +225,8 @@ class Window(QWidget):
         self._refresh_controls()
 
     def _on_vision_finished(self, _elapsed_ms: float) -> None:
+        self._debug_values["vision"] = f"{_elapsed_ms:.0f} ms {self._debug_values['vision']}"
+        self._refresh_debug()
         if not self._closing:
             self._refresh_controls()
 
@@ -256,16 +275,26 @@ class Window(QWidget):
     def _on_audio_state_changed(self, state: str) -> None:
         if state in {AudioOwnerState.WAKE_LISTENING.value, AudioOwnerState.POST_WAKE_RECORDING.value}:
             self.wake_button.setText("Wake: ON")
+            self._debug_values["wake"] = "ON"
         elif state in {AudioOwnerState.OFF.value, AudioOwnerState.SUSPENDED.value, AudioOwnerState.CLOSED.value}:
             self.wake_button.setText("Wake: OFF")
+            self._debug_values["wake"] = "OFF"
+        self._debug_values["mic"] = state
+        self._refresh_debug()
 
     def _on_audio_failed(self, error: str) -> None:
         self.wake_button.setText("Wake: OFF")
         self.history.addItem(f"Erro: {error}")
 
     def _on_wake_detected(self, score: float) -> None:
+        self._debug_values["score"] = f"{score:.2f}"
+        self._refresh_debug()
         if not self._closing and self._assistant_is_idle():
             self.status.setText("Yuki ouviu")
+
+    def _on_vad_state(self, state: str) -> None:
+        self._debug_values["vad"] = state
+        self._refresh_debug()
 
     def _on_utterance_ready(self, recording) -> None:
         if self._closing:
@@ -300,6 +329,14 @@ class Window(QWidget):
     def _on_voice_succeeded(self, result) -> None:
         if self._closing:
             return
+        inference = getattr(result, "inference_seconds", None)
+        rtf = getattr(result, "rtf", None)
+        if isinstance(inference, (int, float)):
+            value = f"{inference * 1000:.0f} ms"
+            if isinstance(rtf, (int, float)):
+                value += f", RTF {rtf:.2f}"
+            self._debug_values["stt"] = value
+            self._refresh_debug()
         self._set_voice_ready()
         text = result.text.strip()
         if not text:
@@ -322,6 +359,20 @@ class Window(QWidget):
         resume_audio = getattr(self.voice, "resume_audio", None)
         if resume_audio is not None:
             resume_audio()
+
+    def _refresh_debug(self) -> None:
+        self.debug_label.setText(
+            " | ".join(
+                (
+                    f"Wake: {self._debug_values['wake']}",
+                    f"score: {self._debug_values['score']}",
+                    f"Mic: {self._debug_values['mic']}",
+                    f"VAD: {self._debug_values['vad']}",
+                    f"STT: {self._debug_values['stt']}",
+                    f"Vision: {self._debug_values['vision']}",
+                )
+            )
+        )
 
     def _set_voice_ready(self) -> None:
         self._voice_state = VoiceState.READY

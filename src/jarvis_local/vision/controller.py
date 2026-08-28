@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -9,6 +10,8 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal
 
 from ..config import VisionConfig
 from .capture import ScreenCaptureService, VisionRetention
+
+log = logging.getLogger(__name__)
 
 
 class VisionWorker(QObject):
@@ -78,7 +81,7 @@ class VisionController(QObject):
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.captured.connect(self.captured)
+        worker.captured.connect(self._on_captured)
         worker.failed.connect(self.failed)
         worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
         thread.finished.connect(worker.deleteLater)
@@ -88,6 +91,15 @@ class VisionController(QObject):
         self.started.emit()
         thread.start()
         return True
+
+    def _on_captured(self, capture: object) -> None:
+        log.debug(
+            "vision capture dimensions=%sx%s target=%s",
+            getattr(capture, "width", "?"),
+            getattr(capture, "height", "?"),
+            getattr(getattr(capture, "target", None), "value", "?"),
+        )
+        self.captured.emit(capture)
 
     def close(self) -> None:
         worker = self._worker
@@ -100,5 +112,6 @@ class VisionController(QObject):
         with_finished = self._thread is not None
         self._worker = None
         self._thread = None
+        log.debug("vision capture finished duration_ms=%.1f", elapsed_ms)
         if with_finished:
             self.finished.emit(elapsed_ms)

@@ -39,6 +39,9 @@ python = ".venv-kokoro/bin/python"
 [performance]
 memory_pressure_threshold = 0.85
 
+[debug]
+perception = false
+
 [audio]
 input_device = "default"
 output_device = "default"
