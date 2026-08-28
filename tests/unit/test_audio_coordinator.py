@@ -84,3 +84,36 @@ def test_coordinator_reports_stream_failure_and_closes():
     assert coordinator.state is AudioOwnerState.OFF
     coordinator.close()
     app.processEvents()
+
+
+def test_coordinator_debounces_wake_scores_in_worker():
+    app = QApplication.instance() or QApplication([])
+    streams = []
+    detections = []
+
+    class Detector:
+        def predict(self, _chunk):
+            return 0.9
+
+    def factory(**kwargs):
+        stream = FakeStream(**kwargs)
+        streams.append(stream)
+        return stream
+
+    coordinator = AudioCoordinator(
+        AudioConfig(),
+        stream_factory=factory,
+        detector_factory=Detector,
+        threshold=0.5,
+        cooldown_seconds=60,
+    )
+    coordinator.wake_detected.connect(detections.append)
+    coordinator.start_wake()
+    assert wait_until(lambda: streams and streams[0].started)
+    streams[0].callback(b"\x00\x00" * 1280, 1280, None, None)
+    streams[0].callback(b"\x00\x00" * 1280, 1280, None, None)
+
+    assert wait_until(lambda: detections == [0.9])
+    coordinator.close()
+    assert wait_until(lambda: streams[0].closed)
+    app.processEvents()

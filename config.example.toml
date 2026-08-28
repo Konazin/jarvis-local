@@ -47,7 +47,7 @@ max_recording_seconds = 30.0
 [wake]
 enabled = false
 backend = "openwakeword"
-model = ""
+model = "hey jarvis"
 threshold = 0.5
 cooldown_seconds = 2.0
 pre_roll_ms = 400

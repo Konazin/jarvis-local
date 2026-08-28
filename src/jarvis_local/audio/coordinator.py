@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from enum import StrEnum
@@ -51,22 +52,38 @@ class AudioRingBuffer:
 
 class AudioStreamWorker(QObject):
     chunk = Signal(object)
+    wake_detected = Signal(float)
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, config: Any, ring_buffer: AudioRingBuffer, stream_factory: Callable[..., Any]) -> None:
+    def __init__(
+        self,
+        config: Any,
+        ring_buffer: AudioRingBuffer,
+        stream_factory: Callable[..., Any],
+        detector_factory: Callable[[], Any] | None = None,
+        threshold: float = 0.5,
+        cooldown_seconds: float = 2.0,
+    ) -> None:
         super().__init__()
         self.config = config
         self.ring_buffer = ring_buffer
         self.stream_factory = stream_factory
+        self.detector_factory = detector_factory
+        self.threshold = threshold
+        self.cooldown_seconds = cooldown_seconds
         self._stop = threading.Event()
         self._stream: Any | None = None
+        self._detector: Any | None = None
+        self._detector_error = False
+        self._last_detection = 0.0
 
     def request_stop(self) -> None:
         self._stop.set()
 
     def run(self) -> None:
         try:
+            self._detector = self.detector_factory() if self.detector_factory is not None else None
             self._stream = self.stream_factory(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
@@ -82,6 +99,7 @@ class AudioStreamWorker(QObject):
         finally:
             stream = self._stream
             self._stream = None
+            self._detector = None
             if stream is not None:
                 for method_name in ("stop", "close"):
                     try:
@@ -96,6 +114,19 @@ class AudioStreamWorker(QObject):
         except (TypeError, ValueError):
             return
         self.ring_buffer.append(chunk)
+        if self.detector_factory is not None:
+            try:
+                score = float(self._detector.predict(chunk)) if self._detector is not None else 0.0
+            except Exception as exc:
+                if not self._detector_error:
+                    self._detector_error = True
+                    self.failed.emit(str(exc))
+                self._stop.set()
+                return
+            now = time.monotonic()
+            if score >= self.threshold and now - self._last_detection >= self.cooldown_seconds:
+                self._last_detection = now
+                self.wake_detected.emit(score)
         self.chunk.emit(chunk)
 
 
@@ -104,6 +135,7 @@ class AudioCoordinator(QObject):
 
     state_changed = Signal(str)
     chunk_received = Signal(object)
+    wake_detected = Signal(float)
     failed = Signal(str)
 
     def __init__(
@@ -111,6 +143,9 @@ class AudioCoordinator(QObject):
         config: Any,
         pre_roll_ms: int = 400,
         stream_factory: Callable[..., Any] | None = None,
+        detector_factory: Callable[[], Any] | None = None,
+        threshold: float = 0.5,
+        cooldown_seconds: float = 2.0,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -121,6 +156,9 @@ class AudioCoordinator(QObject):
 
             stream_factory = RawInputStream
         self._stream_factory = stream_factory
+        self._detector_factory = detector_factory
+        self._threshold = threshold
+        self._cooldown_seconds = cooldown_seconds
         self._lock = threading.RLock()
         self._state = AudioOwnerState.OFF
         self._thread: QThread | None = None
@@ -194,11 +232,19 @@ class AudioCoordinator(QObject):
         self.state_changed.emit(AudioOwnerState.CLOSED.value)
 
     def _start_stream_locked(self) -> None:
-        worker = AudioStreamWorker(self.config, self.ring_buffer, self._stream_factory)
+        worker = AudioStreamWorker(
+            self.config,
+            self.ring_buffer,
+            self._stream_factory,
+            self._detector_factory,
+            self._threshold,
+            self._cooldown_seconds,
+        )
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.chunk.connect(self.chunk_received)
+        worker.wake_detected.connect(self.wake_detected)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
         thread.finished.connect(worker.deleteLater)

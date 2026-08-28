@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from jarvis_local.audio import AudioCoordinator, AudioOwnerState
 from jarvis_local.core.assistant import Assistant
-from jarvis_local.voice import VoiceInteractionController, VoiceState
+from jarvis_local.voice import VoiceInteractionController, VoiceState, WakeWordDetector
 
 from ..config import AudioConfig, STTConfig, WakeConfig
 
@@ -56,6 +56,9 @@ class Window(QWidget):
         self.audio = audio_coordinator or AudioCoordinator(
             audio_config or AudioConfig(),
             (wake_config or WakeConfig()).pre_roll_ms,
+            detector_factory=(lambda: WakeWordDetector(wake_config or WakeConfig())),
+            threshold=(wake_config or WakeConfig()).threshold,
+            cooldown_seconds=(wake_config or WakeConfig()).cooldown_seconds,
             parent=self,
         )
 
@@ -96,6 +99,7 @@ class Window(QWidget):
         self.wake_button.setToolTip("Ativar ou desativar escuta local")
         self.wake_button.clicked.connect(self._toggle_wake)
         self.audio.state_changed.connect(self._on_audio_state_changed)
+        self.audio.wake_detected.connect(self._on_wake_detected)
         self.audio.failed.connect(self._on_audio_failed)
 
         row = QHBoxLayout()
@@ -185,6 +189,10 @@ class Window(QWidget):
     def _on_audio_failed(self, error: str) -> None:
         self.wake_button.setText("Wake: OFF")
         self.history.addItem(f"Erro: {error}")
+
+    def _on_wake_detected(self, score: float) -> None:
+        if not self._closing and self._assistant_is_idle():
+            self.status.setText("Yuki ouviu")
 
     def _voice_released(self) -> None:
         self.voice.release()
