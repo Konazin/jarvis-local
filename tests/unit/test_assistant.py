@@ -109,7 +109,7 @@ def test_check_and_transition_to_thinking_is_atomic() -> None:
 def test_visual_response_is_naturalized_and_tts_gets_speech_text() -> None:
     class NumericLLM:
         def chat(self, text, tools, history=None):
-            return "Você está usando 677.72 MB."
+            return "**Você está usando 677.72 MB.** 😊"
 
     tts, session = FakeTTS(), conversation()
     assistant = Assistant(NumericLLM(), object(), tts, session=session)

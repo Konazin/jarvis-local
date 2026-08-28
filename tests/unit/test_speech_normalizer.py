@@ -31,5 +31,10 @@ def test_speech_units_are_pronounceable(normalizer, visual, speech) -> None:
 
 
 def test_plain_text_punctuation_and_protected_text_are_preserved(normalizer) -> None:
-    text = "Tudo certo, sem números. `1,2 GB` https://example.test/?size=1,2GB."
-    assert normalizer.normalize(text) == text
+    text = "Tudo certo, sem números. **RAM** 😊."
+    assert normalizer.normalize(text) == "Tudo certo, sem números. RAM."
+
+
+def test_speech_drops_code_blocks_and_link_urls(normalizer) -> None:
+    text = "Veja [Firefox](https://example.test) e ```python\nprint('oi')\n```."
+    assert normalizer.normalize(text) == "Veja Firefox e."

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 _PRECISION = re.compile(
@@ -21,6 +22,19 @@ _NUMBER_WITH_UNIT = re.compile(
     r"(?:segundos?|minutos?|horas?|seg|min|h)\b)",
     re.IGNORECASE,
 )
+_FENCED_CODE = re.compile(r"```[^\n`]*\n?(?P<body>[\s\S]*?)```")
+_INLINE_CODE = re.compile(r"`([^`\n]+)`")
+_MARKDOWN_LINK = re.compile(r"\[([^\]\n]+)\]\((https?://[^\s)<>]+)\)", re.IGNORECASE)
+_BOLD = (
+    re.compile(r"\*\*([^\n*]+?)\*\*"),
+    re.compile(r"__([^\n_]+?)__"),
+)
+_ITALIC = (
+    re.compile(r"(?<!\w)\*([^\s*][^*\n]*?[^\s*])\*(?!\w)"),
+    re.compile(r"(?<!\w)_([^\s_][^_\n]*?[^\s_])_(?!\w)"),
+)
+_EMOJI_RANGES = ((0x1F000, 0x1FAFF), (0x2600, 0x27BF))
+_VARIATION_RANGES = ((0xFE00, 0xFE0F), (0xE0100, 0xE01EF))
 
 
 def _decimal(value: str) -> Decimal:
@@ -106,6 +120,38 @@ def _transform_unprotected(text: str, transform) -> str:
         end = match.end()
     parts.append(transform(text[end:]))
     return "".join(parts)
+
+
+def _remove_emoji_and_formatting(text: str) -> str:
+    def keep(char: str) -> bool:
+        codepoint = ord(char)
+        if any(start <= codepoint <= end for start, end in _EMOJI_RANGES + _VARIATION_RANGES):
+            return False
+        return unicodedata.category(char) != "Cf"
+
+    return "".join(char for char in text if keep(char))
+
+
+def sanitize_text(text: str, *, keep_code: bool = True, keep_link_url: bool = True) -> str:
+    """Remove decorative Markdown and emoji without rewriting plain content."""
+    if not isinstance(text, str):
+        raise TypeError("texto deve ser uma string")
+    if keep_code:
+        text = _FENCED_CODE.sub(lambda match: match.group("body"), text)
+    else:
+        text = _FENCED_CODE.sub("", text)
+    text = _MARKDOWN_LINK.sub(
+        lambda match: f"{match.group(1)} ({match.group(2)})" if keep_link_url else match.group(1), text
+    )
+    text = _INLINE_CODE.sub(r"\1", text)
+    for pattern in _BOLD + _ITALIC:
+        text = pattern.sub(r"\1", text)
+    return _remove_emoji_and_formatting(text).strip()
+
+
+class DisplaySanitizer:
+    def sanitize(self, text: str) -> str:
+        return sanitize_text(text)
 
 
 class ResponseNaturalizer:

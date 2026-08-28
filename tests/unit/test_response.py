@@ -1,11 +1,34 @@
 import pytest
 
-from jarvis_local.core.response import ResponseNaturalizer
+from jarvis_local.core.response import DisplaySanitizer, ResponseNaturalizer
 
 
 @pytest.fixture
 def naturalizer() -> ResponseNaturalizer:
     return ResponseNaturalizer()
+
+
+@pytest.fixture
+def sanitizer() -> DisplaySanitizer:
+    return DisplaySanitizer()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("**memória RAM**", "memória RAM"),
+        ("*importante*", "importante"),
+        ("__texto__", "texto"),
+        ("`Firefox`", "Firefox"),
+        ("[Firefox](https://example.test)", "Firefox (https://example.test)"),
+        ("😊 🖥️ 📊 ✅ 🔥 ❤️", ""),
+        ("2 * 4 = 8", "2 * 4 = 8"),
+        ("some_value", "some_value"),
+        ("```python\nsize = 2 * 4\n```", "size = 2 * 4"),
+    ],
+)
+def test_display_sanitizer_removes_decoration_without_destroying_content(sanitizer, raw, expected) -> None:
+    assert sanitizer.sanitize(raw) == expected
 
 
 @pytest.mark.parametrize(

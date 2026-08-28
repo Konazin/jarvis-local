@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
+from jarvis_local.core.response import sanitize_text
+
 _PROTECTED = re.compile(r"```[\s\S]*?```|`[^`\n]*`|https?://[^\s<>]+", re.IGNORECASE)
 _NUMBER_WITH_UNIT = re.compile(
     r"(?<![\w.])(?P<number>[+-]?\d+(?:[.,]\d+)?)[ \t]*(?P<unit>%|°\s?[CF]|(?:KB|MB|GB|TB|B)\b|"
@@ -66,4 +68,6 @@ def _transform_unprotected(text: str) -> str:
 
 class SpeechNormalizer:
     def normalize(self, text: str) -> str:
-        return _transform_unprotected(text)
+        sanitized = sanitize_text(text, keep_code=False, keep_link_url=False)
+        sanitized = re.sub(r"[ \t]+([.,!?;:])", r"\1", sanitized)
+        return _transform_unprotected(sanitized)
