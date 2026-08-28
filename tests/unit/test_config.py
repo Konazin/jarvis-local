@@ -4,9 +4,11 @@ import pytest
 
 from jarvis_local.config import (
     AudioConfig,
+    ContextConfig,
     DebugConfig,
     STTConfig,
     VADConfig,
+    VisionConfig,
     WakeConfig,
     load_config,
     resolve_config_path,
@@ -20,6 +22,7 @@ def test_defaults() -> None:
     assert config.llm.context_size == 4096
     assert config.llm.require_tool_support
     assert config.conversation.max_turns == 8
+    assert config.context.recent_turns == 3
     assert config.tts.voice == "pf_dora"
     assert config.tts.mode == "resident"
     assert config.audio.input_device == "default"
@@ -31,6 +34,15 @@ def test_defaults() -> None:
     assert config.wake.pre_roll_ms == 400
     assert config.vad.end_silence_seconds == 0.8
     assert not config.debug.perception
+
+
+def test_context_and_vision_config_validate() -> None:
+    assert ContextConfig().prune_tool_schemas
+    assert VisionConfig().capture_policy == "explicit"
+    with pytest.raises(ValueError):
+        ContextConfig(soft_limit_ratio=0)
+    with pytest.raises(ValueError):
+        VisionConfig(capture_policy="background")
 
 
 @pytest.mark.parametrize("field", ["threshold", "cooldown_seconds", "pre_roll_ms"])

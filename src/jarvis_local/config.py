@@ -44,6 +44,33 @@ class ConversationConfig:
 
 
 @dataclass(frozen=True)
+class ContextConfig:
+    soft_limit_ratio: float = 0.85
+    recent_turns: int = 3
+    summary_max_estimated_tokens: int = 256
+    prune_tool_schemas: bool = True
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.soft_limit_ratio, bool)
+            or not isinstance(self.soft_limit_ratio, (int, float))
+            or not math.isfinite(self.soft_limit_ratio)
+            or not 0 < self.soft_limit_ratio <= 1
+        ):
+            raise ValueError("context.soft_limit_ratio deve estar entre 0 e 1")
+        if isinstance(self.recent_turns, bool) or not isinstance(self.recent_turns, int) or self.recent_turns < 1:
+            raise ValueError("context.recent_turns deve ser um inteiro positivo")
+        if (
+            isinstance(self.summary_max_estimated_tokens, bool)
+            or not isinstance(self.summary_max_estimated_tokens, int)
+            or self.summary_max_estimated_tokens < 1
+        ):
+            raise ValueError("context.summary_max_estimated_tokens deve ser positivo")
+        if not isinstance(self.prune_tool_schemas, bool):
+            raise ValueError("context.prune_tool_schemas deve ser booleano")
+
+
+@dataclass(frozen=True)
 class TTSConfig:
     engine: str = "kokoro"
     language: str = "pt-BR"
@@ -165,10 +192,13 @@ class VADConfig:
 class VisionConfig:
     enabled: bool = False
     retention_seconds: float = 0.0
+    capture_policy: str = "explicit"
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
             raise ValueError("vision.enabled deve ser booleano")
+        if self.capture_policy not in {"explicit", "always"}:
+            raise ValueError("vision.capture_policy deve ser 'explicit' ou 'always'")
         if (
             isinstance(self.retention_seconds, bool)
             or not isinstance(self.retention_seconds, (int, float))
@@ -234,6 +264,7 @@ class Config:
     assistant: AssistantConfig = AssistantConfig()
     llm: LLMConfig = LLMConfig()
     conversation: ConversationConfig = ConversationConfig()
+    context: ContextConfig = ContextConfig()
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
     debug: DebugConfig = DebugConfig()
@@ -298,6 +329,7 @@ def load_config(path: str | Path | None = None) -> Config:
         AssistantConfig(**_section(data, "assistant")),
         LLMConfig(**_section(data, "llm")),
         ConversationConfig(**_section(data, "conversation")),
+        ContextConfig(**_section(data, "context")),
         TTSConfig(**_section(data, "tts")),
         PerformanceConfig(**_section(data, "performance")),
         DebugConfig(**_section(data, "debug")),

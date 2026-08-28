@@ -105,6 +105,46 @@ def test_external_health_and_props_extract_capabilities() -> None:
     ]
 
 
+@pytest.mark.parametrize("vision", [True, False])
+def test_modalities_vision_has_priority(vision: bool) -> None:
+    payload = {**CAPABILITIES, "modalities": {"vision": vision}, "supports_vision": not vision}
+    capabilities = LLMRuntimeManager._extract_capabilities(payload)
+    assert capabilities.supports_vision is vision
+
+
+def test_vision_falls_back_to_chat_template_caps() -> None:
+    payload = {**CAPABILITIES, "modalities": {"video": True}}
+    assert LLMRuntimeManager._extract_capabilities(payload).supports_vision is True
+
+
+def test_vision_falls_back_to_root_capability() -> None:
+    payload = {**CAPABILITIES, "chat_template_caps": {"supports_tool_calls": True}, "supports_vision": True}
+    assert LLMRuntimeManager._extract_capabilities(payload).supports_vision is True
+
+
+def test_vision_is_unknown_without_server_capability() -> None:
+    payload = {**CAPABILITIES, "chat_template_caps": {"supports_tool_calls": True}}
+    assert LLMRuntimeManager._extract_capabilities(payload).supports_vision is None
+
+
+def test_realistic_llama_cpp_modalities_payload() -> None:
+    payload = {
+        **CAPABILITIES,
+        "modalities": {"vision": True, "video": True, "audio": False},
+        "chat_template_caps": {"supports_tool_calls": True},
+    }
+    capabilities = LLMRuntimeManager._extract_capabilities(payload)
+    assert capabilities.supports_tool_calls is True
+    assert capabilities.supports_vision is True
+
+
+def test_modalities_must_be_a_table_and_vision_boolean() -> None:
+    with pytest.raises(LLMRuntimeError, match="modalities"):
+        LLMRuntimeManager._extract_capabilities({**CAPABILITIES, "modalities": []})
+    with pytest.raises(LLMRuntimeError, match="modalities"):
+        LLMRuntimeManager._extract_capabilities({**CAPABILITIES, "modalities": {"vision": "yes"}})
+
+
 def test_external_offline_and_incompatible_server_is_not_stopped() -> None:
     with pytest.raises(LLMRuntimeError, match="externo esta offline"):
         LLMRuntimeManager(config(), RuntimeClient(health=[httpx.ConnectError("offline")])).ensure_ready()

@@ -266,6 +266,12 @@ class LLMRuntimeManager:
                 raise LLMRuntimeError("capability probe /props contem chat_template_caps incompativel")
             if isinstance(value, bool):
                 raw_caps[key] = value
+        modalities = payload.get("modalities")
+        if modalities is not None and not isinstance(modalities, dict):
+            raise LLMRuntimeError("capability probe /props contem modalities incompativel")
+        modality_vision = modalities.get("vision") if isinstance(modalities, dict) else None
+        if modality_vision is not None and not isinstance(modality_vision, bool):
+            raise LLMRuntimeError("capability probe /props contem modalities incompativel")
         settings = payload.get("default_generation_settings", {})
         if not isinstance(settings, dict):
             raise LLMRuntimeError("capability probe /props contem generation settings incompativel")
@@ -278,7 +284,9 @@ class LLMRuntimeManager:
         return RuntimeCapabilities(
             supports_tool_calls=caps.get("supports_tool_calls"),
             supports_vision=(
-                caps.get("supports_vision")
+                modality_vision
+                if isinstance(modality_vision, bool)
+                else caps.get("supports_vision")
                 if isinstance(caps.get("supports_vision"), bool)
                 else payload.get("supports_vision")
                 if isinstance(payload.get("supports_vision"), bool)
