@@ -14,9 +14,9 @@ from PySide6.QtWidgets import (
 
 from jarvis_local.audio import AudioCoordinator, AudioOwnerState
 from jarvis_local.core.assistant import Assistant
-from jarvis_local.voice import VoiceInteractionController, VoiceState, WakeWordDetector
+from jarvis_local.voice import VADUtterance, VoiceInteractionController, VoiceState, WakeWordDetector
 
-from ..config import AudioConfig, STTConfig, WakeConfig
+from ..config import AudioConfig, STTConfig, VADConfig, WakeConfig
 
 
 class AskWorker(QObject):
@@ -45,6 +45,7 @@ class Window(QWidget):
         stt_config: STTConfig | None = None,
         voice_controller: VoiceInteractionController | None = None,
         wake_config: WakeConfig | None = None,
+        vad_config: VADConfig | None = None,
         audio_coordinator: AudioCoordinator | None = None,
     ) -> None:
         super().__init__()
@@ -53,12 +54,15 @@ class Window(QWidget):
         self._assistant_state = "IDLE"
         self._voice_state = VoiceState.READY
         self._closing = False
+        selected_wake = wake_config or WakeConfig()
+        selected_vad = vad_config or VADConfig()
         self.audio = audio_coordinator or AudioCoordinator(
             audio_config or AudioConfig(),
-            (wake_config or WakeConfig()).pre_roll_ms,
-            detector_factory=(lambda: WakeWordDetector(wake_config or WakeConfig())),
-            threshold=(wake_config or WakeConfig()).threshold,
-            cooldown_seconds=(wake_config or WakeConfig()).cooldown_seconds,
+            selected_wake.pre_roll_ms,
+            detector_factory=lambda: WakeWordDetector(selected_wake),
+            threshold=selected_wake.threshold,
+            cooldown_seconds=selected_wake.cooldown_seconds,
+            utterance_factory=lambda pre_roll: VADUtterance(selected_vad, pre_roll),
             parent=self,
         )
 

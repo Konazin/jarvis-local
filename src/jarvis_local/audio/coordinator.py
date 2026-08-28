@@ -53,6 +53,8 @@ class AudioRingBuffer:
 class AudioStreamWorker(QObject):
     chunk = Signal(object)
     wake_detected = Signal(float)
+    vad_state = Signal(str)
+    utterance_ready = Signal(object)
     failed = Signal(str)
     finished = Signal()
 
@@ -64,6 +66,7 @@ class AudioStreamWorker(QObject):
         detector_factory: Callable[[], Any] | None = None,
         threshold: float = 0.5,
         cooldown_seconds: float = 2.0,
+        utterance_factory: Callable[[bytes], Any] | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -72,11 +75,13 @@ class AudioStreamWorker(QObject):
         self.detector_factory = detector_factory
         self.threshold = threshold
         self.cooldown_seconds = cooldown_seconds
+        self.utterance_factory = utterance_factory
         self._stop = threading.Event()
         self._stream: Any | None = None
         self._detector: Any | None = None
         self._detector_error = False
         self._last_detection = 0.0
+        self._utterance: Any | None = None
 
     def request_stop(self) -> None:
         self._stop.set()
@@ -100,6 +105,7 @@ class AudioStreamWorker(QObject):
             stream = self._stream
             self._stream = None
             self._detector = None
+            self._utterance = None
             if stream is not None:
                 for method_name in ("stop", "close"):
                     try:
@@ -114,6 +120,20 @@ class AudioStreamWorker(QObject):
         except (TypeError, ValueError):
             return
         self.ring_buffer.append(chunk)
+        if self._utterance is not None:
+            try:
+                recording = self._utterance.feed(chunk)
+                self.vad_state.emit(self._utterance.state.value)
+            except Exception as exc:
+                self.failed.emit(str(exc))
+                self._stop.set()
+                return
+            if recording is not None or self._utterance.state.value == "TIMED_OUT":
+                self._utterance = None
+                if recording is not None:
+                    self.utterance_ready.emit(recording)
+            self.chunk.emit(chunk)
+            return
         if self.detector_factory is not None:
             try:
                 score = float(self._detector.predict(chunk)) if self._detector is not None else 0.0
@@ -127,6 +147,14 @@ class AudioStreamWorker(QObject):
             if score >= self.threshold and now - self._last_detection >= self.cooldown_seconds:
                 self._last_detection = now
                 self.wake_detected.emit(score)
+                if self.utterance_factory is not None:
+                    try:
+                        self._utterance = self.utterance_factory(self.ring_buffer.read())
+                        self.vad_state.emit(self._utterance.state.value)
+                    except Exception as exc:
+                        self.failed.emit(str(exc))
+                        self._stop.set()
+                        return
         self.chunk.emit(chunk)
 
 
@@ -136,6 +164,8 @@ class AudioCoordinator(QObject):
     state_changed = Signal(str)
     chunk_received = Signal(object)
     wake_detected = Signal(float)
+    vad_state = Signal(str)
+    utterance_ready = Signal(object)
     failed = Signal(str)
 
     def __init__(
@@ -146,6 +176,7 @@ class AudioCoordinator(QObject):
         detector_factory: Callable[[], Any] | None = None,
         threshold: float = 0.5,
         cooldown_seconds: float = 2.0,
+        utterance_factory: Callable[[bytes], Any] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -159,6 +190,7 @@ class AudioCoordinator(QObject):
         self._detector_factory = detector_factory
         self._threshold = threshold
         self._cooldown_seconds = cooldown_seconds
+        self._utterance_factory = utterance_factory
         self._lock = threading.RLock()
         self._state = AudioOwnerState.OFF
         self._thread: QThread | None = None
@@ -239,12 +271,15 @@ class AudioCoordinator(QObject):
             self._detector_factory,
             self._threshold,
             self._cooldown_seconds,
+            self._utterance_factory,
         )
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.chunk.connect(self.chunk_received)
-        worker.wake_detected.connect(self.wake_detected)
+        worker.wake_detected.connect(self._on_wake_detected)
+        worker.vad_state.connect(self.vad_state)
+        worker.utterance_ready.connect(self._on_utterance_ready)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
         thread.finished.connect(worker.deleteLater)
@@ -252,6 +287,22 @@ class AudioCoordinator(QObject):
         thread.finished.connect(thread.deleteLater)
         self._worker, self._thread = worker, thread
         thread.start()
+
+    def _on_wake_detected(self, score: float) -> None:
+        with self._lock:
+            if self._state is AudioOwnerState.WAKE_LISTENING and self._utterance_factory is not None:
+                self._state = AudioOwnerState.POST_WAKE_RECORDING
+        self.wake_detected.emit(score)
+        if self.state is AudioOwnerState.POST_WAKE_RECORDING:
+            self.state_changed.emit(AudioOwnerState.POST_WAKE_RECORDING.value)
+
+    def _on_utterance_ready(self, recording: object) -> None:
+        with self._lock:
+            if self._state is AudioOwnerState.POST_WAKE_RECORDING:
+                self._state = AudioOwnerState.WAKE_LISTENING
+        self.utterance_ready.emit(recording)
+        if self.state is AudioOwnerState.WAKE_LISTENING:
+            self.state_changed.emit(AudioOwnerState.WAKE_LISTENING.value)
 
     def _on_failed(self, error: str) -> None:
         with self._lock:

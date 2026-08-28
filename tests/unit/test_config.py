@@ -5,6 +5,7 @@ import pytest
 from jarvis_local.config import (
     AudioConfig,
     STTConfig,
+    VADConfig,
     WakeConfig,
     load_config,
     resolve_config_path,
@@ -27,6 +28,7 @@ def test_defaults() -> None:
     assert config.stt.initial_prompt == ""
     assert not config.wake.enabled
     assert config.wake.pre_roll_ms == 400
+    assert config.vad.end_silence_seconds == 0.8
 
 
 @pytest.mark.parametrize("field", ["threshold", "cooldown_seconds", "pre_roll_ms"])
@@ -34,6 +36,12 @@ def test_invalid_wake_config(field) -> None:
     value = {"threshold": 2, "cooldown_seconds": -1, "pre_roll_ms": 200}[field]
     with pytest.raises(ValueError):
         WakeConfig(**{field: value})
+
+
+@pytest.mark.parametrize("field", ["speech_start_timeout_seconds", "end_silence_seconds", "max_utterance_seconds"])
+def test_invalid_vad_config(field) -> None:
+    with pytest.raises(ValueError):
+        VADConfig(**{field: 0})
 
 
 @pytest.mark.parametrize(

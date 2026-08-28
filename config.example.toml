@@ -52,6 +52,13 @@ threshold = 0.5
 cooldown_seconds = 2.0
 pre_roll_ms = 400
 
+[vad]
+speech_start_timeout_seconds = 5.0
+end_silence_seconds = 0.8
+max_utterance_seconds = 15.0
+min_speech_seconds = 0.25
+energy_threshold = 500
+
 [stt]
 enabled = true
 engine = "whisper.cpp"

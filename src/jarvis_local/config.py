@@ -121,6 +121,38 @@ class WakeConfig:
 
 
 @dataclass(frozen=True)
+class VADConfig:
+    speech_start_timeout_seconds: float = 5.0
+    end_silence_seconds: float = 0.8
+    max_utterance_seconds: float = 15.0
+    min_speech_seconds: float = 0.25
+    energy_threshold: int = 500
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("speech_start_timeout_seconds", self.speech_start_timeout_seconds),
+            ("end_silence_seconds", self.end_silence_seconds),
+            ("max_utterance_seconds", self.max_utterance_seconds),
+            ("min_speech_seconds", self.min_speech_seconds),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"vad.{name} deve ser positivo")
+        if (
+            isinstance(self.energy_threshold, bool)
+            or not isinstance(self.energy_threshold, int)
+            or not 1 <= self.energy_threshold <= 32_767
+        ):
+            raise ValueError("vad.energy_threshold deve estar entre 1 e 32767")
+        if self.min_speech_seconds > self.max_utterance_seconds:
+            raise ValueError("vad.min_speech_seconds não pode exceder max_utterance_seconds")
+
+
+@dataclass(frozen=True)
 class STTConfig:
     enabled: bool = True
     engine: str = "whisper.cpp"
@@ -180,6 +212,7 @@ class Config:
     performance: PerformanceConfig = PerformanceConfig()
     audio: AudioConfig = AudioConfig()
     wake: WakeConfig = WakeConfig()
+    vad: VADConfig = VADConfig()
     stt: STTConfig = STTConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
 
@@ -241,6 +274,7 @@ def load_config(path: str | Path | None = None) -> Config:
         PerformanceConfig(**_section(data, "performance")),
         AudioConfig(**_section(data, "audio")),
         WakeConfig(**_section(data, "wake")),
+        VADConfig(**_section(data, "vad")),
         STTConfig(**_section(data, "stt")),
         _applications(data),
     )
