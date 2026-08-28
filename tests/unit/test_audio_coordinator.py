@@ -195,3 +195,46 @@ def test_coordinator_emits_suspended_only_after_stream_closes():
     coordinator.close()
     assert wait_until(lambda: streams[1].closed)
     app.processEvents()
+
+
+def test_coordinator_returns_to_wake_listening_after_vad_timeout():
+    app = QApplication.instance() or QApplication([])
+    streams = []
+    states = []
+
+    class Detector:
+        def predict(self, _chunk):
+            return 0.9
+
+    class TimeoutUtterance:
+        def __init__(self, _pre_roll):
+            self.state = type("State", (), {"value": "WAITING_SPEECH"})
+
+        def feed(self, _chunk):
+            self.state.value = "TIMED_OUT"
+            return None
+
+    def factory(**kwargs):
+        stream = FakeStream(**kwargs)
+        streams.append(stream)
+        return stream
+
+    coordinator = AudioCoordinator(
+        AudioConfig(),
+        stream_factory=factory,
+        detector_factory=Detector,
+        utterance_factory=TimeoutUtterance,
+        cooldown_seconds=60,
+    )
+    coordinator.state_changed.connect(states.append)
+    coordinator.start_wake()
+    assert wait_until(lambda: streams and streams[0].started)
+    streams[0].callback(b"wake", 4, None, None)
+    assert wait_until(lambda: coordinator.state is AudioOwnerState.POST_WAKE_RECORDING)
+    streams[0].callback(b"silence", 7, None, None)
+
+    assert wait_until(lambda: coordinator.state is AudioOwnerState.WAKE_LISTENING)
+    assert AudioOwnerState.WAKE_LISTENING.value in states
+    coordinator.close()
+    assert wait_until(lambda: streams[0].closed)
+    app.processEvents()

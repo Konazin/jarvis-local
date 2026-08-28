@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from ..config import VisionConfig
 from .capture import ScreenCaptureService, VisionRetention
@@ -64,6 +64,12 @@ class VisionController(QObject):
         self._thread: QThread | None = None
         self._worker: VisionWorker | None = None
         self._started_at = 0.0
+        self._cleanup_timer: QTimer | None = None
+        if config.retention_seconds > 0:
+            self._cleanup_timer = QTimer(self)
+            self._cleanup_timer.setInterval(60_000)
+            self._cleanup_timer.timeout.connect(self.retention.cleanup)
+            self._cleanup_timer.start()
 
     @property
     def available(self) -> bool:
@@ -105,6 +111,8 @@ class VisionController(QObject):
         worker = self._worker
         if worker is not None:
             worker.cancel()
+        if self._cleanup_timer is not None:
+            self._cleanup_timer.stop()
         self.retention.close()
 
     def _on_finished(self) -> None:

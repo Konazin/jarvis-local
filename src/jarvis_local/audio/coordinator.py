@@ -303,7 +303,7 @@ class AudioCoordinator(QObject):
         thread.started.connect(worker.run)
         worker.chunk.connect(self.chunk_received)
         worker.wake_detected.connect(self._on_wake_detected)
-        worker.vad_state.connect(self.vad_state)
+        worker.vad_state.connect(self._on_vad_state)
         worker.utterance_ready.connect(self._on_utterance_ready)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(thread.quit, Qt.ConnectionType.DirectConnection)
@@ -326,6 +326,16 @@ class AudioCoordinator(QObject):
             if self._state is AudioOwnerState.POST_WAKE_RECORDING:
                 self._state = AudioOwnerState.WAKE_LISTENING
         self.utterance_ready.emit(recording)
+        if self.state is AudioOwnerState.WAKE_LISTENING:
+            self.state_changed.emit(AudioOwnerState.WAKE_LISTENING.value)
+
+    def _on_vad_state(self, state: str) -> None:
+        self.vad_state.emit(state)
+        if state != "TIMED_OUT":
+            return
+        with self._lock:
+            if self._state is AudioOwnerState.POST_WAKE_RECORDING:
+                self._state = AudioOwnerState.WAKE_LISTENING
         if self.state is AudioOwnerState.WAKE_LISTENING:
             self.state_changed.emit(AudioOwnerState.WAKE_LISTENING.value)
 
