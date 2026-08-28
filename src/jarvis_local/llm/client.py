@@ -1,9 +1,11 @@
+import ipaddress
 import json
 import logging
 import re
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -140,6 +142,8 @@ class LLMClient:
         if requirement.unsupported:
             return requirement.reason or "Não consigo verificar esse estado com as ferramentas atuais."
         image_data_url = self._image_data_url(image)
+        if image_data_url and not self._is_loopback_endpoint(self.config.base_url):
+            raise LLMError("análise visual exige um llama-server local em loopback")
         if image_data_url and self.capabilities_provider is not None:
             capabilities = self.capabilities_provider()
             if getattr(capabilities, "supports_vision", None) is not True:
@@ -327,6 +331,16 @@ class LLMClient:
         if not isinstance(data_url, str) or not data_url.startswith("data:image/"):
             raise LLMError("imagem visual deve ser uma data URL local")
         return data_url
+
+    @staticmethod
+    def _is_loopback_endpoint(base_url: str) -> bool:
+        hostname = urlsplit(base_url).hostname
+        if hostname is None or hostname.casefold() == "localhost":
+            return hostname is not None
+        try:
+            return ipaddress.ip_address(hostname).is_loopback
+        except ValueError:
+            return False
 
     @staticmethod
     def _trim_history(history: list[dict[str, str]], budget: int) -> list[dict[str, str]]:

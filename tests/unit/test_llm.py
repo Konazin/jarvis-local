@@ -92,6 +92,18 @@ def test_multimodal_chat_requires_runtime_vision_capability():
     assert requests == []
 
 
+def test_multimodal_chat_rejects_non_loopback_server():
+    llm = LLMClient(
+        replace(load_config().llm, base_url="http://192.168.1.20:8080/v1"),
+        httpx.Client(transport=httpx.MockTransport(lambda _request: httpx.Response(500))),
+        capabilities_provider=lambda: SimpleNamespace(supports_vision=True),
+    )
+    item = ScreenCapture(b"png", "image/png", 10, 10, CaptureTarget.ACTIVE_WINDOW, 1.0)
+
+    with pytest.raises(LLMError, match="loopback"):
+        llm.chat("O que você vê?", ToolRegistry(), image=item)
+
+
 def test_raw_registered_tool_call_is_retried_without_execution() -> None:
     calls = []
     registry = ToolRegistry()
