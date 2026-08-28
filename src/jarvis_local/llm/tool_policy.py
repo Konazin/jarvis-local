@@ -2,12 +2,33 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class ToolRequirementMode(StrEnum):
+    AUTO = "AUTO"
+    REQUIRED_TOOL = "REQUIRED_TOOL"
+    UNSUPPORTED = "UNSUPPORTED"
 
 
 @dataclass(frozen=True)
 class ToolRequirement:
     required: bool
     allowed_tools: tuple[str, ...] = ()
+    mode: ToolRequirementMode | None = None
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode is None:
+            object.__setattr__(
+                self,
+                "mode",
+                ToolRequirementMode.REQUIRED_TOOL if self.required else ToolRequirementMode.AUTO,
+            )
+
+    @property
+    def unsupported(self) -> bool:
+        return self.mode is ToolRequirementMode.UNSUPPORTED
 
 
 class ToolUsePolicy:
@@ -17,6 +38,10 @@ class ToolUsePolicy:
         text = _normalize(user_text)
         if not text or _is_conceptual(text):
             return ToolRequirement(False)
+
+        unsupported = _unsupported_capability(text)
+        if unsupported is not None:
+            return ToolRequirement(False, mode=ToolRequirementMode.UNSUPPORTED, reason=unsupported)
 
         if _has_any(text, "processo", "processos", "aplicativo", "aplicativos", "programa", "programas"):
             if _has_any(text, "ram", "memoria") and _has_any(
@@ -69,3 +94,17 @@ def _has_any(text: str, *terms: str) -> bool:
 
 def _is_conceptual(text: str) -> bool:
     return _has_any(text, "explique", "o que e", "que e", "diferenca entre", "significa")
+
+
+def _unsupported_capability(text: str) -> str | None:
+    if "aba" in text or "abas" in text:
+        return "Não consigo verificar quantas abas estão abertas com as ferramentas atuais."
+    if _has_any(text, "url", "site", "pagina") and _has_any(
+        text, "aberto", "aberta", "exibido", "exibida", "carregado", "carregada", "qual"
+    ):
+        return "Não consigo verificar qual página ou URL está aberta com as ferramentas atuais."
+    if _has_any(text, "arquivo", "documento", "conteudo", "botao") and _has_any(
+        text, "aberto", "aberta", "abertos", "abertas", "editor", "aplicativo", "janela", "dentro", "qual"
+    ):
+        return "Não consigo verificar o conteúdo interno de aplicativos com as ferramentas atuais."
+    return None

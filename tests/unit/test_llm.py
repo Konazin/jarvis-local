@@ -6,7 +6,8 @@ import httpx
 import pytest
 
 from jarvis_local.config import load_config
-from jarvis_local.llm.client import MAX_TOOL_CALLS_PER_ROUND, LLMClient, LLMError
+from jarvis_local.llm.client import BASE_SYSTEM_PROMPT, MAX_TOOL_CALLS_PER_ROUND, LLMClient, LLMError
+from jarvis_local.llm.session import estimate_tokens
 from jarvis_local.tools import system
 from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.executor import ToolExecutor
@@ -122,7 +123,8 @@ def test_context_budget_trims_only_old_complete_turns() -> None:
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
-    config = replace(load_config().llm, context_size=860, max_tokens=50)
+    system_tokens = estimate_tokens(f"/no_think\n{BASE_SYSTEM_PROMPT}")
+    config = replace(load_config().llm, context_size=system_tokens + 163, max_tokens=50)
     llm = LLMClient(config, httpx.Client(transport=httpx.MockTransport(handler)))
     history = [
         {"role": "user", "content": "a" * 30},
@@ -423,6 +425,17 @@ def test_offline_and_invalid_response() -> None:
     assert llm.last_metrics.request_count == 1
     with pytest.raises(LLMError):
         client(httpx.Response(200, json={"bad": []})).chat("oi", ToolRegistry())
+
+
+def test_unsupported_capability_returns_deterministic_limit_without_http_request() -> None:
+    calls = []
+    transport = httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(500))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=transport))
+
+    answer = llm.chat("Quantas abas estão abertas no Firefox?", ToolRegistry())
+
+    assert answer == "Não consigo verificar quantas abas estão abertas com as ferramentas atuais."
+    assert calls == []
 
 
 @pytest.mark.parametrize(

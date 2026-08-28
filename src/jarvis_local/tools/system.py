@@ -221,7 +221,8 @@ SYSTEM_UPTIME_TOOL = Tool(
 )
 FIND_PROCESSES_TOOL = Tool(
     "find_processes",
-    "Procura processos em execução pelo nome para verificar se um aplicativo está rodando.",
+    "Procura processos em execução pelo nome para verificar se um aplicativo está rodando. "
+    "Não inspeciona abas, URLs, documentos, conteúdo ou elementos da interface de aplicativos.",
     _PROCESS_SEARCH_PARAMETERS,
     RiskLevel.SAFE,
     find_processes,

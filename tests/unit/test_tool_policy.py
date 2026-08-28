@@ -1,6 +1,6 @@
 import pytest
 
-from jarvis_local.llm.tool_policy import ToolRequirement, ToolUsePolicy
+from jarvis_local.llm.tool_policy import ToolRequirement, ToolRequirementMode, ToolUsePolicy
 
 
 @pytest.mark.parametrize(
@@ -36,3 +36,27 @@ def test_live_questions_require_only_the_matching_tool(question, tool) -> None:
 )
 def test_conceptual_questions_keep_auto_tool_choice(question) -> None:
     assert ToolUsePolicy().evaluate(question) == ToolRequirement(False)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Quantas abas estão abertas no Firefox?",
+        "Qual site está aberto no Firefox?",
+        "Qual arquivo está aberto no editor?",
+        "Qual botão está dentro do aplicativo?",
+    ],
+)
+def test_unsupported_internal_application_state_is_not_routed_to_processes(question) -> None:
+    requirement = ToolUsePolicy().evaluate(question)
+
+    assert requirement.mode is ToolRequirementMode.UNSUPPORTED
+    assert not requirement.required
+    assert requirement.allowed_tools == ()
+    assert requirement.reason
+
+
+def test_conceptual_tab_question_is_not_blocked() -> None:
+    requirement = ToolUsePolicy().evaluate("Explique o que é uma aba do navegador.")
+
+    assert requirement.mode is ToolRequirementMode.AUTO

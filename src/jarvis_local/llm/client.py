@@ -59,6 +59,9 @@ Ao apresentar números, fale como uma pessoa:
 Não execute uma ação apenas porque o usuário mencionou um aplicativo, URL, arquivo ou recurso.
 Quando houver dúvida entre interpretar uma frase como informação ou como comando, trate-a como informação.
 Só use tools de ação quando houver intenção clara de executar a ação.
+
+Um resultado de tool é um fato atual do sistema; uma observação visual é parcial; conhecimento do modelo não é
+estado atual da máquina. Não confunda essas origens e diga claramente quando uma capacidade não estiver disponível.
 """
 
 
@@ -122,6 +125,8 @@ class LLMClient:
         raw_tool_retry_used = False
         tool_calls_total = 0
         requirement = self.tool_policy.evaluate(text)
+        if requirement.unsupported:
+            return requirement.reason or "Não consigo verificar esse estado com as ferramentas atuais."
         freshness_retry_used = False
         freshness_satisfied = not requirement.required
         copied_history = self._copy_history(history)
