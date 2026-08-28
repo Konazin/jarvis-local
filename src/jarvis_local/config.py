@@ -83,6 +83,44 @@ class AudioConfig:
 
 
 @dataclass(frozen=True)
+class WakeConfig:
+    enabled: bool = False
+    backend: str = "openwakeword"
+    model: str = ""
+    threshold: float = 0.5
+    cooldown_seconds: float = 2.0
+    pre_roll_ms: int = 400
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("wake.enabled deve ser booleano")
+        if not isinstance(self.backend, str) or not self.backend.strip():
+            raise ValueError("wake.backend não pode ser vazio")
+        if not isinstance(self.model, str):
+            raise ValueError("wake.model deve ser texto")
+        if (
+            isinstance(self.threshold, bool)
+            or not isinstance(self.threshold, (int, float))
+            or not math.isfinite(self.threshold)
+            or not 0 < self.threshold <= 1
+        ):
+            raise ValueError("wake.threshold deve estar entre 0 e 1")
+        if (
+            isinstance(self.cooldown_seconds, bool)
+            or not isinstance(self.cooldown_seconds, (int, float))
+            or not math.isfinite(self.cooldown_seconds)
+            or self.cooldown_seconds < 0
+        ):
+            raise ValueError("wake.cooldown_seconds deve ser não negativo")
+        if (
+            isinstance(self.pre_roll_ms, bool)
+            or not isinstance(self.pre_roll_ms, int)
+            or not 300 <= self.pre_roll_ms <= 500
+        ):
+            raise ValueError("wake.pre_roll_ms deve estar entre 300 e 500")
+
+
+@dataclass(frozen=True)
 class STTConfig:
     enabled: bool = True
     engine: str = "whisper.cpp"
@@ -141,6 +179,7 @@ class Config:
     tts: TTSConfig = TTSConfig()
     performance: PerformanceConfig = PerformanceConfig()
     audio: AudioConfig = AudioConfig()
+    wake: WakeConfig = WakeConfig()
     stt: STTConfig = STTConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
 
@@ -201,6 +240,7 @@ def load_config(path: str | Path | None = None) -> Config:
         TTSConfig(**_section(data, "tts")),
         PerformanceConfig(**_section(data, "performance")),
         AudioConfig(**_section(data, "audio")),
+        WakeConfig(**_section(data, "wake")),
         STTConfig(**_section(data, "stt")),
         _applications(data),
     )

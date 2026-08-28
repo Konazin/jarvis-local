@@ -2,7 +2,14 @@ from pathlib import Path
 
 import pytest
 
-from jarvis_local.config import AudioConfig, STTConfig, load_config, resolve_config_path, resolve_project_path
+from jarvis_local.config import (
+    AudioConfig,
+    STTConfig,
+    WakeConfig,
+    load_config,
+    resolve_config_path,
+    resolve_project_path,
+)
 
 
 def test_defaults() -> None:
@@ -18,6 +25,15 @@ def test_defaults() -> None:
     assert config.stt.engine == "whisper.cpp"
     assert config.stt.model_path == "models/whisper/ggml-base.bin"
     assert config.stt.initial_prompt == ""
+    assert not config.wake.enabled
+    assert config.wake.pre_roll_ms == 400
+
+
+@pytest.mark.parametrize("field", ["threshold", "cooldown_seconds", "pre_roll_ms"])
+def test_invalid_wake_config(field) -> None:
+    value = {"threshold": 2, "cooldown_seconds": -1, "pre_roll_ms": 200}[field]
+    with pytest.raises(ValueError):
+        WakeConfig(**{field: value})
 
 
 @pytest.mark.parametrize(

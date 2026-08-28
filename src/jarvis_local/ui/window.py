@@ -12,10 +12,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis_local.audio import AudioCoordinator, AudioOwnerState
 from jarvis_local.core.assistant import Assistant
 from jarvis_local.voice import VoiceInteractionController, VoiceState
 
-from ..config import AudioConfig, STTConfig
+from ..config import AudioConfig, STTConfig, WakeConfig
 
 
 class AskWorker(QObject):
@@ -43,6 +44,8 @@ class Window(QWidget):
         audio_config: AudioConfig | None = None,
         stt_config: STTConfig | None = None,
         voice_controller: VoiceInteractionController | None = None,
+        wake_config: WakeConfig | None = None,
+        audio_coordinator: AudioCoordinator | None = None,
     ) -> None:
         super().__init__()
 
@@ -50,6 +53,11 @@ class Window(QWidget):
         self._assistant_state = "IDLE"
         self._voice_state = VoiceState.READY
         self._closing = False
+        self.audio = audio_coordinator or AudioCoordinator(
+            audio_config or AudioConfig(),
+            (wake_config or WakeConfig()).pre_roll_ms,
+            parent=self,
+        )
 
         self.setWindowTitle("Yuki")
         self.resize(480, 360)
@@ -84,17 +92,25 @@ class Window(QWidget):
         if not self.voice.available:
             self.voice_button.setEnabled(False)
             self.voice_button.setToolTip("STT desabilitado na configuração")
+        self.wake_button = QPushButton("Wake: OFF")
+        self.wake_button.setToolTip("Ativar ou desativar escuta local")
+        self.wake_button.clicked.connect(self._toggle_wake)
+        self.audio.state_changed.connect(self._on_audio_state_changed)
+        self.audio.failed.connect(self._on_audio_failed)
 
         row = QHBoxLayout()
         row.addWidget(self.input)
         row.addWidget(self.send)
         row.addWidget(self.voice_button)
+        row.addWidget(self.wake_button)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.status)
         layout.addWidget(self.history)
         layout.addLayout(row)
         self._refresh_controls()
+        if wake_config is not None and wake_config.enabled:
+            self._toggle_wake()
 
     def ask(self) -> None:
         self._submit_text(self.input.text())
@@ -153,6 +169,23 @@ class Window(QWidget):
     def _voice_pressed(self) -> None:
         self.voice.press()
 
+    def _toggle_wake(self) -> None:
+        if self.audio.state is AudioOwnerState.WAKE_LISTENING:
+            self.audio.stop_wake()
+            return
+        if self.audio.start_wake():
+            self.wake_button.setText("Wake: ON")
+
+    def _on_audio_state_changed(self, state: str) -> None:
+        if state == AudioOwnerState.WAKE_LISTENING.value:
+            self.wake_button.setText("Wake: ON")
+        elif state in {AudioOwnerState.OFF.value, AudioOwnerState.SUSPENDED.value, AudioOwnerState.CLOSED.value}:
+            self.wake_button.setText("Wake: OFF")
+
+    def _on_audio_failed(self, error: str) -> None:
+        self.wake_button.setText("Wake: OFF")
+        self.history.addItem(f"Erro: {error}")
+
     def _voice_released(self) -> None:
         self.voice.release()
         if self._voice_state is VoiceState.LISTENING:
@@ -206,6 +239,7 @@ class Window(QWidget):
         self._closing = True
         self._voice_state = VoiceState.CLOSED
         self.voice.close()
+        self.audio.close()
         self._refresh_controls()
 
     def closeEvent(self, event) -> None:

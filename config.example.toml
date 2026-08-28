@@ -44,6 +44,14 @@ input_device = "default"
 output_device = "default"
 max_recording_seconds = 30.0
 
+[wake]
+enabled = false
+backend = "openwakeword"
+model = ""
+threshold = 0.5
+cooldown_seconds = 2.0
+pre_roll_ms = 400
+
 [stt]
 enabled = true
 engine = "whisper.cpp"

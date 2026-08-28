@@ -8,6 +8,7 @@ from .capture import (
     MicrophoneCapture,
     list_input_devices,
 )
+from .coordinator import AudioCoordinator, AudioOwnerState, AudioRingBuffer
 
 __all__ = [
     "CHANNELS",
@@ -18,4 +19,7 @@ __all__ = [
     "CaptureState",
     "MicrophoneCapture",
     "list_input_devices",
+    "AudioCoordinator",
+    "AudioOwnerState",
+    "AudioRingBuffer",
 ]
