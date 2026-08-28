@@ -87,7 +87,7 @@ class STTConfig:
     enabled: bool = True
     engine: str = "whisper.cpp"
     binary: str = "whisper-cli"
-    model_path: str = "models/whisper/ggml-small.bin"
+    model_path: str = "models/whisper/ggml-base.bin"
     language: str = "pt"
     threads: int = 4
     timeout_seconds: float = 30.0

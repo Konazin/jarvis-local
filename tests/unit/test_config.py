@@ -16,7 +16,7 @@ def test_defaults() -> None:
     assert config.audio.input_device == "default"
     assert config.audio.max_recording_seconds == 30.0
     assert config.stt.engine == "whisper.cpp"
-    assert config.stt.model_path == "models/whisper/ggml-small.bin"
+    assert config.stt.model_path == "models/whisper/ggml-base.bin"
     assert config.stt.initial_prompt == ""
 
 
