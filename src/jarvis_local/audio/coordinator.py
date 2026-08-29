@@ -12,7 +12,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 
-from .capture import CHANNELS, DTYPE, SAMPLE_RATE, SAMPLE_WIDTH, _device_value
+from .capture import CHANNELS, DTYPE, SAMPLE_RATE, SAMPLE_WIDTH, _default_raw_input_stream, _device_value
 
 log = logging.getLogger(__name__)
 
@@ -197,9 +197,7 @@ class AudioCoordinator(QObject):
         self.config = config
         self.ring_buffer = AudioRingBuffer(int(SAMPLE_RATE * SAMPLE_WIDTH * pre_roll_ms / 1000))
         if stream_factory is None:
-            from sounddevice import RawInputStream
-
-            stream_factory = RawInputStream
+            stream_factory = _default_raw_input_stream
         self._stream_factory = stream_factory
         self._detector_factory = detector_factory
         self._threshold = threshold

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from jarvis_local.audio import AudioCoordinator, AudioOwnerState
 from jarvis_local.core.assistant import Assistant
-from jarvis_local.vision import VisionController, VisualIntentPolicy
+from jarvis_local.vision import CaptureTarget, VisionController
 from jarvis_local.voice import VADUtterance, VoiceInteractionController, VoiceState, WakeWordDetector
 
 from ..config import AudioConfig, DebugConfig, STTConfig, VADConfig, VisionConfig, WakeConfig
@@ -74,7 +74,6 @@ class Window(QWidget):
         selected_wake = wake_config or WakeConfig()
         selected_vad = vad_config or VADConfig()
         self.vision = vision_controller or VisionController(vision_config or VisionConfig(), parent=self)
-        self.visual_policy = VisualIntentPolicy()
         self._visual_prompt: str | None = None
         self.audio = audio_coordinator or AudioCoordinator(
             audio_config or AudioConfig(),
@@ -89,12 +88,14 @@ class Window(QWidget):
         self.setWindowTitle("Yuki")
         self.resize(480, 360)
 
-        self.status = QLabel("IDLE")
+        self.status = QLabel("Pronta")
+        self.status.setToolTip("Estado atual da Yuki")
         self.debug_label = QLabel()
         self.debug_label.setVisible(self._debug_enabled)
         self._refresh_debug()
         self.history = QListWidget()
         self.input = QLineEdit()
+        self.input.setToolTip("Digite uma mensagem e pressione Enter")
 
         self.voice = voice_controller or VoiceInteractionController(
             audio_config or AudioConfig(),
@@ -114,6 +115,7 @@ class Window(QWidget):
         self.input.setPlaceholderText("Digite uma mensagem...")
 
         self.send = QPushButton("Enviar")
+        self.send.setToolTip("Enviar mensagem")
         self.send.clicked.connect(self.ask)
         self.input.returnPressed.connect(self.ask)
         self.voice_button = QPushButton("Falar")
@@ -142,11 +144,13 @@ class Window(QWidget):
         row.addWidget(self.voice_button)
         row.addWidget(self.wake_button)
         self.look_button = QPushButton("Olhar")
-        self.look_button.setToolTip("Analisar a janela ativa")
+        self.look_button.setToolTip("Observar a janela anterior, sem capturar a própria Yuki")
         self.look_button.clicked.connect(self._look)
         row.addWidget(self.look_button)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
         layout.addWidget(self.status)
         layout.addWidget(self.debug_label)
         layout.addWidget(self.history)
@@ -157,9 +161,6 @@ class Window(QWidget):
 
     def ask(self) -> None:
         text = self.input.text().strip()
-        if self.visual_policy.is_visual_intent(text):
-            self._start_visual(text)
-            return
         self._submit_text(text)
 
     def _submit_text(self, text: str, preserve_input: bool = False, image=None) -> bool:
@@ -187,16 +188,16 @@ class Window(QWidget):
 
     def _look(self) -> None:
         prompt = self.input.text().strip() or "Descreva o que você consegue ver nesta janela."
-        self._start_visual(prompt)
+        self._start_visual(prompt, CaptureTarget.PREVIOUS_WINDOW)
 
-    def _start_visual(self, prompt: str) -> bool:
+    def _start_visual(self, prompt: str, target: CaptureTarget = CaptureTarget.PREVIOUS_WINDOW) -> bool:
         if not self.vision.available:
             self.history.addItem("Erro: análise visual desabilitada na configuração")
             return False
         if not self._assistant_is_idle() or self._voice_state is not VoiceState.READY or self.vision.busy:
             return False
         self._visual_prompt = prompt
-        if not self.vision.start():
+        if not self.vision.start(target):
             self._visual_prompt = None
             return False
         self._refresh_controls()
@@ -204,7 +205,7 @@ class Window(QWidget):
 
     def _on_vision_started(self) -> None:
         if not self._closing:
-            self.status.setText("Capturando tela...")
+            self.status.setText("Observando…")
 
     def _on_vision_captured(self, capture) -> None:
         if self._closing:
@@ -214,14 +215,14 @@ class Window(QWidget):
         self._debug_values["vision"] = f"{getattr(capture, 'target', '-')}"
         self._refresh_debug()
         if not self._submit_text(prompt, preserve_input=bool(self.input.text().strip()), image=capture):
-            self.status.setText("IDLE")
+            self.status.setText("Pronta")
 
     def _on_vision_failed(self, error: str) -> None:
         if self._closing:
             return
         self._visual_prompt = None
         self.history.addItem(f"Erro: {error}")
-        self.status.setText("IDLE")
+        self.status.setText("Pronta")
         self._refresh_controls()
 
     def _on_vision_finished(self, _elapsed_ms: float) -> None:
@@ -239,7 +240,16 @@ class Window(QWidget):
     def _on_state_changed(self, state: str) -> None:
         self._assistant_state = state
         if self._voice_state is VoiceState.READY:
-            self.status.setText(state)
+            self.status.setText(
+                {
+                    "IDLE": "Pronta",
+                    "THINKING": "Pensando…",
+                    "EXECUTING": "Executando…",
+                    "SPEAKING": "Falando…",
+                    "ERROR": "Erro",
+                    "CONFIRMING": "Aguardando confirmação…",
+                }.get(state, state)
+            )
         if state == "IDLE":
             self._resume_audio()
         elif self.audio.state in {AudioOwnerState.WAKE_LISTENING, AudioOwnerState.POST_WAKE_RECORDING}:
@@ -303,7 +313,7 @@ class Window(QWidget):
             return
         submit_recording = getattr(self.voice, "submit_recording", None)
         if submit_recording is None or not submit_recording(recording):
-            self.status.setText("IDLE")
+            self.status.setText("Pronta")
 
     def _voice_released(self) -> None:
         self.voice.release()
@@ -342,7 +352,7 @@ class Window(QWidget):
         self._set_voice_ready()
         text = result.text.strip()
         if not text:
-            self.status.setText("IDLE")
+            self.status.setText("Pronta")
             self._resume_audio()
             return
         self.input.setText(text)
@@ -354,7 +364,7 @@ class Window(QWidget):
             return
         self._set_voice_ready()
         self.history.addItem(f"Erro: {error}")
-        self.status.setText("IDLE")
+        self.status.setText("Pronta")
         self._resume_audio()
 
     def _resume_audio(self) -> None:

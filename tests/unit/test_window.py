@@ -26,7 +26,8 @@ class FakeVisionController(QObject):
         self.busy = False
         self.start_count = 0
 
-    def start(self):
+    def start(self, target=None):
+        self.target = target
         self.start_count += 1
         self.busy = True
         self.started.emit()
@@ -72,7 +73,7 @@ def test_window_initializes_with_status_before_signal_connection() -> None:
 
     assert app is not None
     assert window.status is not None
-    assert window.status.text() == "IDLE"
+    assert window.status.text() == "Pronta"
 
     window._on_state_changed("SPEAKING")
     assert not window.input.isEnabled()
@@ -95,7 +96,8 @@ def test_window_look_button_starts_explicit_visual_capture():
     window._look()
 
     assert vision.start_count == 1
-    assert window.status.text() == "Capturando tela..."
+    assert window.status.text() == "Observando…"
+    assert vision.target.value == "previous_window"
     window.shutdown()
     window.deleteLater()
     app.processEvents()

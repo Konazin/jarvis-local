@@ -9,8 +9,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Callable
 
-import sounddevice as sd
-
 log = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000
@@ -40,6 +38,18 @@ def _device_value(device: str | int) -> str | int | None:
     return None if device == "default" else device
 
 
+def _default_raw_input_stream(**kwargs):
+    from sounddevice import RawInputStream
+
+    return RawInputStream(**kwargs)
+
+
+def _default_query_devices():
+    from sounddevice import query_devices
+
+    return query_devices()
+
+
 def _has_input_overflow(status: Any) -> bool:
     if bool(getattr(status, "input_overflow", False)):
         return True
@@ -49,7 +59,7 @@ def _has_input_overflow(status: Any) -> bool:
 
 def list_input_devices(query_devices: Callable[[], Any] | None = None) -> list[dict[str, str | int | float]]:
     """List only usable input-device metadata; no PortAudio objects escape."""
-    devices = (query_devices or sd.query_devices)()
+    devices = (query_devices or _default_query_devices)()
     if isinstance(devices, dict):
         devices = [devices]
     result: list[dict[str, str | int | float]] = []
@@ -80,7 +90,7 @@ class MicrophoneCapture:
         self._input_device = getattr(config, "input_device", "default")
         self._max_recording_seconds = getattr(config, "max_recording_seconds", 30.0)
         self._validate_config()
-        self._stream_factory = stream_factory or sd.RawInputStream
+        self._stream_factory = stream_factory or _default_raw_input_stream
         self._lock = threading.RLock()
         self._state = CaptureState.IDLE
         self._stream: Any | None = None

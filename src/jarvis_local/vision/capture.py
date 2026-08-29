@@ -64,11 +64,11 @@ class ScreenCaptureService:
             raise ScreenCaptureError("target de captura visual inválido") from exc
         if isinstance(max_dimension, bool) or not isinstance(max_dimension, int) or max_dimension < 256:
             raise ScreenCaptureError("dimensão máxima de captura inválida")
+        if target is CaptureTarget.FULL_SCREEN:
+            return self._capture_full_screen(max_dimension)
         xprop = shutil.which("xprop")
         if xprop is None:
             raise ScreenCaptureError("capability_unavailable: xprop não encontrado")
-        if target is CaptureTarget.FULL_SCREEN:
-            return self._capture_full_screen(max_dimension)
         window_id = self._window_id(xprop, target)
         screen = self._screen_provider()
         if screen is None:

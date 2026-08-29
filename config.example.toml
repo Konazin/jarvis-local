@@ -75,6 +75,7 @@ energy_threshold = 500
 [vision]
 enabled = false
 capture_policy = "explicit"
+max_capture_dimension = 1920
 # 0 não grava capturas; o máximo permitido é 1800 segundos.
 retention_seconds = 0.0
 

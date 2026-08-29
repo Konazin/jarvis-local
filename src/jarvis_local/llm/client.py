@@ -190,7 +190,15 @@ class LLMClient:
             for tool_round in range(4):
                 turn.tool_round = tool_round + 1
                 request_count += 1
-                prepared = compactor.prepare(messages, schemas, current_message_index)
+                try:
+                    prepared = compactor.prepare(messages, schemas, current_message_index)
+                except ContextCompactionError:
+                    fallback = self._schema_budget_fallback(registry, schemas)
+                    if fallback == schemas:
+                        raise
+                    log.debug("using broad tool schema fallback under context pressure")
+                    schemas = fallback
+                    prepared = compactor.prepare(messages, schemas, current_message_index)
                 messages = prepared.messages
                 schemas = prepared.schemas
                 current_message_index = prepared.current_message_index
@@ -288,13 +296,12 @@ class LLMClient:
         arguments: dict[str, Any],
         turn: _TurnState,
     ) -> Any:
-        available = set(self.tool_policy.available(registry))
-        if name not in available:
-            return {"status": "blocked", "reason": "tool_unavailable"}
         try:
             tool = registry.get(name)
         except KeyError:
             return {"status": "error", "reason": "unknown_tool"}
+        if name not in self._available_tool_names(registry):
+            return {"status": "blocked", "reason": "tool_unavailable"}
         fingerprint = self._tool_fingerprint(name, arguments)
         previous_epoch = turn.fingerprints.get(fingerprint)
         if previous_epoch == turn.state_epoch:
@@ -361,6 +368,46 @@ class LLMClient:
                 {"status": "error", "reason": "non_serializable_result", "error": str(exc)},
                 ensure_ascii=False,
             )
+
+    def _available_tool_names(self, registry: ToolRegistry) -> tuple[str, ...]:
+        names = self.tool_policy.available(registry)
+        if self.capabilities_provider is not None:
+            capabilities = self.capabilities_provider()
+            if getattr(capabilities, "supports_vision", None) is False:
+                names = tuple(name for name in names if name != "observe_screen")
+        return names
+
+    def _schema_budget_fallback(
+        self, registry: ToolRegistry, schemas: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Keep several fixed capability groups when the complete catalog cannot fit."""
+        groups: dict[str, list[str]] = {
+            "desktop": [],
+            "audio": [],
+            "media": [],
+            "applications": [],
+            "vision": [],
+        }
+        for schema in schemas:
+            function = schema.get("function", {})
+            name = function.get("name") if isinstance(function, dict) else None
+            if not isinstance(name, str):
+                continue
+            if name == "observe_screen":
+                group = "vision"
+            elif any(term in name for term in ("audio", "volume", "mute")):
+                group = "audio"
+            elif "media" in name:
+                group = "media"
+            elif any(term in name for term in ("application", "open_url", "process")):
+                group = "applications"
+            else:
+                group = "desktop"
+            groups[group].append(name)
+        selected = [name for names in groups.values() for name in names[:3]]
+        if len(selected) >= len(schemas):
+            return schemas
+        return registry.schemas(selected)
 
     def _system_prompt(self) -> str:
         control = "/think" if self.config.thinking else "/no_think"
@@ -487,7 +534,7 @@ class LLMClient:
         self, registry: ToolRegistry, requirement: ToolRequirement | None
     ) -> list[dict[str, Any]]:
         # Availability is structural. Intent selection stays with the model via tool_choice=auto.
-        return registry.schemas(self.tool_policy.available(registry))
+        return registry.schemas(self._available_tool_names(registry))
 
     @staticmethod
     def _raw_tool_name(content: str, registry: ToolRegistry) -> str | None:

@@ -18,18 +18,44 @@ from .catalog import ApplicationCatalog, ApplicationDefinition, normalize_alias
 _FIELD_CODES = {"%f", "%F", "%u", "%U", "%i", "%c", "%k", "%d", "%D", "%n", "%N", "%v", "%m"}
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _PATH_DENYLIST = {
+    "apt",
+    "awk",
     "bash",
+    "cat",
+    "chmod",
+    "cp",
+    "curl",
     "dash",
     "dd",
     "env",
+    "find",
     "fish",
+    "flatpak",
+    "git",
+    "grep",
+    "kill",
+    "ln",
+    "mkfs",
+    "mount",
+    "mv",
     "node",
+    "pacman",
     "perl",
+    "printf",
     "python",
     "python3",
+    "rm",
+    "sed",
     "ruby",
     "sh",
+    "shred",
     "sudo",
+    "systemctl",
+    "tar",
+    "umount",
+    "wget",
+    "which",
+    "xargs",
     "zsh",
 }
 
@@ -99,7 +125,11 @@ def _read_desktop_entry(path: Path) -> ApplicationDefinition | None:
     try:
         parser.read(path, encoding="utf-8")
         entry = parser["Desktop Entry"]
-        if entry.get("Type", "Application") != "Application" or entry.get("Hidden", "false").casefold() == "true":
+        if (
+            entry.get("Type", "Application") != "Application"
+            or entry.get("Hidden", "false").casefold() == "true"
+            or entry.get("NoDisplay", "false").casefold() == "true"
+        ):
             return None
         name = entry.get("Name", "").strip()
         command = _parse_exec(entry.get("Exec", ""))

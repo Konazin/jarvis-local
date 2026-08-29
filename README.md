@@ -9,8 +9,8 @@ Assistente desktop local e leve para Linux, em desenvolvimento inicial.
 ```text
 texto do usuário
       ↓
-Yuki ── llama.cpp / Qwen
-   ├── Tool Registry
+Yuki ── llama.cpp / Qwen ── loop agentivo (tool_choice=auto)
+   ├── Tool Registry / executor seguro
    └── Kokoro TTS → áudio
 ```
 
@@ -40,7 +40,7 @@ Com `thinking = false`, o cliente usa `/no_think` como fallback e também envia 
 
 ### Ações de aplicativos
 
-Os aplicativos que a Yuki pode abrir precisam ser cadastrados na seção `[applications]` do `config.toml`; os exemplos em `config.example.toml` podem ser alterados localmente. O LLM recebe apenas aliases, e abrir um aplicativo exige confirmação. Os comandos reais ficam na configuração confiável e nunca são fornecidos pelo modelo. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
+Os aplicativos configurados em `[applications]` continuam sendo a fonte explícita. O catálogo também pode descobrir executáveis seguros no `PATH`, entradas `.desktop` em diretórios XDG e, quando instalado, aplicativos Flatpak. O LLM recebe apenas aliases, e abrir um aplicativo exige confirmação; comandos reais nunca são fornecidos pelo modelo nem passam por shell. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
 
 A Yuki também lista aplicativos configurados em execução e pode solicitar seu fechamento, sempre com confirmação. O fechamento compara nomes de processo exatos definidos em `process_names`; não há encerramento arbitrário por PID, shell ou comando externo.
 
@@ -79,13 +79,13 @@ O backend de wake é opcional e configurado em `[wake]`, sem download automátic
 
 ### Percepção visual
 
-`vision.enabled = false` mantém a visão desligada por padrão. O botão `Olhar` e intents explícitos como “o que você vê” capturam somente a janela ativa via X11, em PNG na memória, e enviam texto mais imagem ao mesmo llama-server quando `/props` anuncia `modalities.vision = true` (com fallback para os formatos antigos). A `ConversationSession` nunca recebe bytes ou base64. Wayland retorna indisponibilidade clara; retenção de debug é opcional, fica em cache XDG e expira em no máximo 1800 segundos.
+`vision.enabled = false` mantém a visão desligada por padrão. A capability `observe_screen` oferece `previous_window` (padrão), `active_window` e `full_screen`; o botão `Olhar` usa a janela anterior para não capturar a própria Yuki. A permissão explícita é apenas um gate: o modelo continua decidindo se deve observar. Capturas são PNG em memória, enviadas como observação multimodal ao mesmo llama-server quando `/props` anuncia `modalities.vision = true`; Wayland retorna indisponibilidade clara. `max_capture_dimension` limita o maior lado e retenção de debug é opcional, expira em no máximo 1800 segundos.
 
 Wake/VAD são leves e transitórios; Whisper e captura visual não ficam residentes. O llama-server e o Kokoro seguem sendo os componentes residentes já existentes. Não há benchmark de hardware embutido nesta etapa.
 
 ### Contexto da sessão
 
-O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O `ContextCompactor` usa um limite suave (82% por padrão) antes do hard limit de `llm.context_size`, remove somente turns antigos completos, reduz schemas de tools por intenção e compacta resultados JSON grandes antes de cada POST, inclusive no meio de uma rodada. Preferências e decisões antigas podem entrar em um resumo determinístico curto; fatos live continuam exigindo uma tool atual. Nada disso é persistido em disco e desaparece ao fechar o aplicativo.
+O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O `ContextCompactor` usa um limite suave (82% por padrão) antes do hard limit de `llm.context_size`, remove somente turns antigos completos e compacta resultados grandes antes de cada POST, inclusive no meio de uma rodada. Todas as tools disponíveis são expostas quando cabem; sob pressão, a falha é ampla e determinística, sem roteamento por palavra-chave. Preferências e decisões antigas podem entrar em um resumo determinístico curto. Nada disso é persistido em disco e desaparece ao fechar o aplicativo.
 
 Para o setup multimodal atual, `config.example.toml` documenta `Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M` como opção. O exemplo mantém visão desligada por segurança; ative-a localmente somente quando o `/props` do servidor anunciar a modalidade visual.
 

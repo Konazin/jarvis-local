@@ -360,7 +360,7 @@ def test_window_empty_transcript_does_not_submit_or_replace_input():
 
     assert assistant.calls == []
     assert window.input.text() == "texto anterior"
-    assert window.status.text() == "IDLE"
+    assert window.status.text() == "Pronta"
     cleanup_window(window)
 
 
@@ -383,7 +383,7 @@ def test_window_error_preserves_input_and_recovers_controls():
 
     assert window.input.text() == "texto anterior"
     assert window.history.item(window.history.count() - 1).text() == "Erro: modelo Whisper não encontrado"
-    assert window.status.text() == "IDLE"
+    assert window.status.text() == "Pronta"
     assert window.voice_button.isEnabled()
     cleanup_window(window)
 
