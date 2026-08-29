@@ -11,20 +11,17 @@ import httpx
 
 from jarvis_local.config import ContextConfig
 from jarvis_local.llm.session import estimate_tokens
+from jarvis_local.tools.base import ToolObservation
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 
 from .context import ContextCompactionError, ContextCompactor, ContextMetrics, message_estimated_tokens
-from .tool_policy import ToolRequirement, ToolUsePolicy
+from .tool_policy import ToolAvailabilityPolicy, ToolRequirement
 
 log = logging.getLogger(__name__)
 _RAW_TOOL_RETRY_PROMPT = (
     "Sua resposta anterior serializou uma chamada de ferramenta como texto. "
     "Use o mecanismo oficial de tool calling ou responda normalmente."
-)
-_FRESHNESS_RETRY_PROMPT = (
-    "Esta pergunta pede um fato atual da máquina. Use uma das tools permitidas "
-    "antes de responder; não responda apenas com texto."
 )
 MAX_TOOL_CALLS_PER_ROUND = 4
 MAX_TOOL_CALLS_TOTAL = 8
@@ -33,46 +30,43 @@ CONTEXT_SAFETY_MARGIN_TOKENS = 64
 IMAGE_ESTIMATED_TOKENS = 512
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
-Responda em português brasileiro, de forma curta, direta e natural. Normalmente use 1–3 frases.
-Não use emojis nem Markdown decorativo em respostas simples; não use negrito ou itálico apenas por estilo.
-Não repita a pergunta e não termine oferecendo ajuda adicional. Não termine com “quer que eu...”, “posso...”,
-“só pedir” ou equivalentes.
-Para fatos do sistema, informe diretamente o resultado fornecido pela tool. Use listas somente quando ajudarem
-e blocos de código somente quando forem necessários.
-Nunca invente capacidades que as tools não fornecem. Quando não puder observar algo, diga claramente.
-Não transforme inferência em fato.
 
-Use as ferramentas disponíveis quando forem necessárias.
-Nunca invente o resultado de uma ferramenta.
+Objetivo: entender o pedido e resolvê-lo com o menor número necessário de ações.
+Responda em português brasileiro, de forma curta, direta e natural, normalmente em 1–3 frases.
+Sem emojis, Markdown decorativo, repetição da pergunta ou ofertas finais como “quer que eu...”, “posso...” e “só pedir”.
 
-Tools SAFE podem executar automaticamente; tools CONFIRM podem exigir autorização do usuário.
-`user_rejected` significa que o usuário negou, e `dangerous_tool` significa que a política bloqueou a ação.
-Nunca alegue que uma tool executou se o resultado indicar rejeição, bloqueio ou erro.
-Para `open_application`, `opened: true` só confirma que o processo foi iniciado; diga que o aplicativo foi iniciado,
-sem afirmar que a janela apareceu ou que o startup terminou com sucesso.
+Você possui tools para observar ou alterar partes do computador. Você decide se uma tool é necessária, qual usar e se
+outra etapa faz sentido depois do resultado. Zero tools é válido quando conhecimento próprio, contexto ou uma resposta
+conceitual bastam. Não use uma tool só porque uma palavra relacionada apareceu; não busque dados extras sem motivo.
+Use tool quando precisar de estado atual, observação externa, ação real ou quando o resultado anterior criar uma
+necessidade.
+Uma tool suficiente é melhor que várias. Depois de responder ao pedido, pare.
 
-Ao apresentar números, fale como uma pessoa:
-- Por padrão, arredonde valores técnicos quando a precisão não for importante.
-- Nunca use "cerca de" ou "aproximadamente" junto com casas decimais desnecessárias.
-- 677,72 MB deve virar "cerca de 678 MB" ou "cerca de 680 MB".
-- 94,84 GB deve virar "cerca de 95 GB".
-- 63,27% deve virar "cerca de 63%".
-- 10 horas e 14 minutos pode virar "cerca de 10 horas".
-- Preserve casas decimais somente se o usuário pedir valor exato ou se a precisão mudar a conclusão.
-- Nunca invente precisão que a ferramenta não forneceu.
+Tool result é uma observação externa: nunca invente resultado. Se falhar, leia o motivo, não alegue sucesso e tente uma
+alternativa razoável somente se ela existir e fizer sentido. Não repita a mesma tool com os mesmos argumentos sem uma
+razão concreta ou mudança de estado.
 
-Não execute uma ação apenas porque o usuário mencionou um aplicativo, URL, arquivo ou recurso.
-Quando houver dúvida entre interpretar uma frase como informação ou como comando, trate-a como informação.
-Só use tools de ação quando houver intenção clara de executar a ação.
+SAFE pode executar sem confirmação. CONFIRM exige autorização. DANGEROUS é bloqueada. `user_rejected`, `blocked` e
+`error` significam que a ação não aconteceu. Em `open_application`, `opened: true` confirma apenas o início do processo.
+Não forneça comandos ao runtime: escolha somente o alias e os argumentos definidos no schema.
 
-Um resultado de tool é um fato atual do sistema; uma observação visual é parcial; conhecimento do modelo não é
-estado atual da máquina. Não confunda essas origens e diga claramente quando uma capacidade não estiver disponível.
-Quando receber uma imagem, trate-a somente como OBSERVAÇÃO VISUAL parcial: diga "consigo ver" quando apropriado,
-não afirme que elementos ocultos existem e não transforme o que aparece na tela em estado interno exato do aplicativo.
-Uma captura com seis abas permite dizer que você consegue ver seis abas, mas não que existem exatamente seis abas.
-O contexto da conversa pode guardar preferências e frases anteriores, mas fatos antigos não substituem uma tool ou
-uma observação atual do sistema.
-"""
+Separe as fontes: SYSTEM_FACT é estado atual observado por tool; VISUAL_OBSERVATION é parcial e mostra apenas o que está
+visível (uma OBSERVAÇÃO VISUAL parcial); CONVERSATION_CONTEXT guarda preferências e referências; MODEL_KNOWLEDGE é
+conhecimento geral. Fatos antigos não
+substituem uma observação atual. Uma imagem com seis abas permite dizer que seis estão visíveis, não que existem seis.
+
+Exemplos:
+- “O que é memória RAM?” → responda diretamente.
+- “Quanto de RAM estou usando?” → use uma tool de estado atual, se necessário.
+- “O Discord normalmente usa muita RAM?” → responda conceitualmente.
+- “O Discord está aberto?” → escolha uma capability de processo/aplicativo.
+- “Abra o Discord.” → escolha uma action de aplicativo.
+- “Quantas abas estão abertas?” → não deduza isso por processos; visão só pode relatar abas visíveis.
+
+Ao apresentar números, arredonde quando a precisão não for importante, preserve precisão solicitada e nunca invente
+casas decimais. Use listas/código somente quando ajudarem. Não imprima seu raciocínio interno; entregue apenas a
+resposta e
+chamadas oficiais de tool."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +97,24 @@ class LLMError(RuntimeError):
     pass
 
 
+@dataclass
+class _TurnState:
+    goal: str
+    tool_round: int = 0
+    total_calls: int = 0
+    state_epoch: int = 0
+    fingerprints: dict[str, int] | None = None
+    retries: dict[str, int] | None = None
+    last_results: dict[str, Any] | None = None
+    observations: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        self.fingerprints = {}
+        self.retries = {}
+        self.last_results = {}
+        self.observations = []
+
+
 class LLMClient:
     def __init__(
         self,
@@ -114,8 +126,9 @@ class LLMClient:
         on_confirmation_start=None,
         on_confirmation_finish=None,
         capabilities_provider: Callable[[], Any] | None = None,
-        tool_policy: ToolUsePolicy | None = None,
+        tool_policy: ToolAvailabilityPolicy | None = None,
         context_config: ContextConfig | None = None,
+        vision_permission=None,
     ) -> None:
         self.config = config
         self.client = client or httpx.Client(timeout=config.timeout_seconds)
@@ -125,10 +138,12 @@ class LLMClient:
         self.on_confirmation_start = on_confirmation_start
         self.on_confirmation_finish = on_confirmation_finish
         self.capabilities_provider = capabilities_provider
-        self.tool_policy = tool_policy or ToolUsePolicy()
+        self.tool_policy = tool_policy or ToolAvailabilityPolicy()
         self.context_config = context_config or ContextConfig()
+        self.vision_permission = vision_permission
         self._last_metrics: LLMCallMetrics | None = None
         self._last_context_metrics: ContextMetrics | None = None
+        self._active_turn: _TurnState | None = None
 
     @property
     def last_metrics(self) -> LLMCallMetrics | None:
@@ -154,10 +169,7 @@ class LLMClient:
         }
         timing_totals: dict[str, float | None] = {"prompt_ms": None, "predicted_ms": None}
         raw_tool_retry_used = False
-        tool_calls_total = 0
         requirement = self.tool_policy.evaluate(text)
-        if requirement.unsupported:
-            return requirement.reason or "Não consigo verificar esse estado com as ferramentas atuais."
         image_data_url = self._image_data_url(image)
         if image_data_url and not self._is_loopback_endpoint(self.config.base_url):
             raise LLMError("análise visual exige um llama-server local em loopback")
@@ -165,15 +177,18 @@ class LLMClient:
             capabilities = self.capabilities_provider()
             if getattr(capabilities, "supports_vision", None) is not True:
                 raise LLMError("o runtime LLM não anuncia suporte a análise visual")
-        freshness_retry_used = False
-        freshness_satisfied = not requirement.required
         copied_history = self._copy_history(history)
         schemas = self._schemas_for_requirement(registry, requirement)
         messages = self._prepare_messages(text, registry, copied_history, requirement, image_data_url, schemas)
         current_message_index = len(messages) - 1
         compactor = ContextCompactor(self.config.context_size, self.config.max_tokens, self.context_config)
+        turn = _TurnState(text)
+        self._active_turn = turn
+        if self.vision_permission is not None:
+            self.vision_permission.begin_turn(text)
         try:
-            for _ in range(4):
+            for tool_round in range(4):
+                turn.tool_round = tool_round + 1
                 request_count += 1
                 prepared = compactor.prepare(messages, schemas, current_message_index)
                 messages = prepared.messages
@@ -183,7 +198,7 @@ class LLMClient:
                 response = self.client.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
                     json=self._request_payload(
-                        messages, registry, requirement, freshness_satisfied, schemas=schemas
+                        messages, registry, requirement, schemas=schemas
                     ),
                 )
                 response.raise_for_status()
@@ -199,10 +214,10 @@ class LLMClient:
                     if len(calls) > MAX_TOOL_CALLS_PER_ROUND:
                         log.warning("tool call limit exceeded: round=%s", len(calls))
                         raise LLMError("modelo solicitou tools demais em uma única rodada")
-                    if tool_calls_total + len(calls) > MAX_TOOL_CALLS_TOTAL:
-                        log.warning("tool call limit exceeded: total=%s", tool_calls_total + len(calls))
+                    if turn.total_calls + len(calls) > MAX_TOOL_CALLS_TOTAL:
+                        log.warning("tool call limit exceeded: total=%s", turn.total_calls + len(calls))
                         raise LLMError("modelo solicitou tools demais nesta conversa")
-                    tool_calls_total += len(calls)
+                    turn.total_calls += len(calls)
                 if not calls:
                     content = message.get("content")
                     if not isinstance(content, str):
@@ -216,24 +231,8 @@ class LLMClient:
                         messages.append({"role": "user", "content": _RAW_TOOL_RETRY_PROMPT})
                         log.info("raw tool-call retry")
                         continue
-                    if requirement.required and not freshness_satisfied:
-                        if freshness_retry_used:
-                            raise LLMError("resposta sem tool para uma pergunta de estado atual")
-                        freshness_retry_used = True
-                        messages.append({"role": "assistant", "content": content})
-                        messages.append({"role": "user", "content": _FRESHNESS_RETRY_PROMPT})
-                        continue
                     self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
                     return content.strip()
-                if requirement.required and not freshness_satisfied:
-                    invalid_name = self._invalid_required_tool(calls, requirement)
-                    if invalid_name is not None:
-                        if freshness_retry_used:
-                            raise LLMError(f"tool não permitida para esta pergunta: {invalid_name}")
-                        freshness_retry_used = True
-                        messages.append({"role": "assistant", **message})
-                        messages.append({"role": "user", "content": _FRESHNESS_RETRY_PROMPT})
-                        continue
                 tool_call_message = dict(message)
                 tool_call_message.setdefault("role", "assistant")
                 messages.append(tool_call_message)
@@ -252,28 +251,15 @@ class LLMClient:
                         arguments = json.loads(raw_arguments)
                         if not isinstance(arguments, dict):
                             raise ValueError("argumentos da tool devem ser um objeto")
-                        executor = self.tool_executor or ToolExecutor(registry)
-                        result = executor.execute(
+                        result = self._execute_tool(
+                            registry,
                             name,
                             arguments,
-                            on_confirmation_start=lambda request: self._callback(self.on_confirmation_start, request),
-                            on_confirmation_finish=lambda request, approved: self._callback(
-                                self.on_confirmation_finish, request, approved
-                            ),
-                            on_execution_start=lambda tool_name: self._callback(self.on_tool_start, tool_name),
-                            on_execution_finish=lambda tool_name: self._callback(self.on_tool_finish, tool_name),
+                            turn,
                         )
-                        if requirement.required and not freshness_satisfied:
-                            freshness_satisfied = True
                     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                         result = {"error": str(exc)}
-                    try:
-                        serialized_result = json.dumps(result, ensure_ascii=False)
-                    except (TypeError, ValueError) as exc:
-                        serialized_result = json.dumps(
-                            {"status": "error", "reason": "non_serializable_result", "error": str(exc)},
-                            ensure_ascii=False,
-                        )
+                    serialized_result = self._tool_result_content(result)
                     messages.append(
                         {
                             "role": "tool",
@@ -288,8 +274,93 @@ class LLMClient:
             if isinstance(exc, ContextCompactionError):
                 raise LLMError(str(exc)) from exc
             raise LLMError(f"falha no llama-server: {exc}") from exc
+        finally:
+            if self.vision_permission is not None:
+                self.vision_permission.end_turn()
+            self._active_turn = None
         self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
         raise LLMError("limite de chamadas de tools excedido")
+
+    def _execute_tool(
+        self,
+        registry: ToolRegistry,
+        name: str,
+        arguments: dict[str, Any],
+        turn: _TurnState,
+    ) -> Any:
+        available = set(self.tool_policy.available(registry))
+        if name not in available:
+            return {"status": "blocked", "reason": "tool_unavailable"}
+        try:
+            tool = registry.get(name)
+        except KeyError:
+            return {"status": "error", "reason": "unknown_tool"}
+        fingerprint = self._tool_fingerprint(name, arguments)
+        previous_epoch = turn.fingerprints.get(fingerprint)
+        if previous_epoch == turn.state_epoch:
+            previous_retry_count = turn.retries.get(fingerprint, 0)
+            last = turn.last_results.get(fingerprint)
+            if previous_retry_count == 0 and isinstance(last, dict) and last.get("status") == "error":
+                turn.retries[fingerprint] = 1
+            else:
+                return {
+                    "status": "duplicate_skipped",
+                    "reason": (
+                        "Same tool and arguments were already executed during this turn and no intervening "
+                        "state-changing action occurred."
+                    ),
+                }
+        executor = self.tool_executor or ToolExecutor(registry)
+        result = executor.execute(
+            name,
+            arguments,
+            on_confirmation_start=lambda request: self._callback(self.on_confirmation_start, request),
+            on_confirmation_finish=lambda request, approved: self._callback(
+                self.on_confirmation_finish, request, approved
+            ),
+            on_execution_start=lambda tool_name: self._callback(self.on_tool_start, tool_name),
+            on_execution_finish=lambda tool_name: self._callback(self.on_tool_finish, tool_name),
+        )
+        turn.fingerprints[fingerprint] = turn.state_epoch
+        try:
+            turn.observations.append(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        except (TypeError, ValueError):
+            turn.observations.append("")
+        turn.last_results[fingerprint] = result
+        if tool.mutates_state and self._result_changed(result):
+            turn.state_epoch += 1
+        return result
+
+    @staticmethod
+    def _tool_fingerprint(name: str, arguments: dict[str, Any]) -> str:
+        canonical = json.dumps(
+            arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        return f"{name}:{canonical}"
+
+    @staticmethod
+    def _result_changed(result: Any) -> bool:
+        if not isinstance(result, dict):
+            return True
+        if result.get("status") in {"error", "blocked", "rejected"}:
+            return False
+        return result.get("changed", True) is not False and result.get("closed", True) is not False
+
+    @staticmethod
+    def _tool_result_content(result: Any) -> str | list[dict[str, Any]]:
+        if isinstance(result, ToolObservation):
+            content: list[dict[str, Any]] = [{"type": "text", "text": result.text}]
+            if result.image is not None:
+                data_url = result.image.data_url()
+                content.append({"type": "image_url", "image_url": {"url": data_url}})
+            return content
+        try:
+            return json.dumps(result, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            return json.dumps(
+                {"status": "error", "reason": "non_serializable_result", "error": str(exc)},
+                ensure_ascii=False,
+            )
 
     def _system_prompt(self) -> str:
         control = "/think" if self.config.thinking else "/no_think"
@@ -396,7 +467,6 @@ class LLMClient:
         freshness_satisfied: bool = True,
         schemas: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        required = requirement is not None and requirement.required and not freshness_satisfied
         if schemas is None:
             schemas = self._schemas_for_requirement(registry, requirement)
         payload: dict[str, Any] = {
@@ -404,7 +474,7 @@ class LLMClient:
             "messages": messages,
             "max_tokens": self.config.max_tokens,
             "tools": schemas,
-            "tool_choice": "required" if required else "auto",
+            "tool_choice": "auto",
         }
         if not self.config.thinking:
             payload["chat_template_kwargs"] = {"enable_thinking": False}
@@ -416,35 +486,8 @@ class LLMClient:
     def _schemas_for_requirement(
         self, registry: ToolRegistry, requirement: ToolRequirement | None
     ) -> list[dict[str, Any]]:
-        if requirement is None:
-            names = None
-        elif requirement.required:
-            names = requirement.allowed_tools
-        elif self.context_config.prune_tool_schemas:
-            names = requirement.preferred_tools
-        else:
-            names = None
-        if names is None:
-            return registry.schemas()
-        selected = []
-        for name in names:
-            try:
-                selected.extend(registry.schemas((name,)))
-            except KeyError as exc:
-                if requirement is not None and requirement.required:
-                    raise LLMError(f"tool de contexto não registrada: {exc.args[0]}") from exc
-        return selected
-
-    @staticmethod
-    def _invalid_required_tool(calls: list[Any], requirement: ToolRequirement) -> str | None:
-        allowed = set(requirement.allowed_tools)
-        for call in calls:
-            if not isinstance(call, dict) or not isinstance(call.get("function"), dict):
-                return "chamada malformada"
-            name = call["function"].get("name")
-            if not isinstance(name, str) or name not in allowed:
-                return str(name or "ausente")
-        return None
+        # Availability is structural. Intent selection stays with the model via tool_choice=auto.
+        return registry.schemas(self.tool_policy.available(registry))
 
     @staticmethod
     def _raw_tool_name(content: str, registry: ToolRegistry) -> str | None:

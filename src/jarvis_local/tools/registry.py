@@ -13,6 +13,9 @@ class ToolRegistry:
             raise ValueError(f"tool já registrada: {tool.name}")
         self._tools[tool.name] = tool
 
+    def names(self) -> tuple[str, ...]:
+        return tuple(self._tools)
+
     def schemas(self, names: Iterable[str] | None = None) -> list[dict[str, Any]]:
         tools = self._tools.values() if names is None else (self.get(name) for name in names)
         return [tool.schema() for tool in tools]

@@ -314,7 +314,7 @@ def test_tool_round_keeps_history_and_current_tool_messages() -> None:
     assert history == [{"role": "user", "content": "meu projeto é Yuki"}, {"role": "assistant", "content": "certo"}]
 
 
-def tool_calls_response(count, offset=0):
+def tool_calls_response(count, offset=0, name="action", arguments="{}"):
     return httpx.Response(
         200,
         json={
@@ -322,7 +322,7 @@ def tool_calls_response(count, offset=0):
                 {
                     "message": {
                         "tool_calls": [
-                            {"id": str(offset + index), "function": {"name": "action", "arguments": "{}"}}
+                            {"id": str(offset + index), "function": {"name": name, "arguments": arguments}}
                             for index in range(count)
                         ]
                     }
@@ -351,18 +351,77 @@ def test_tool_call_round_limit_rejects_without_partial_execution() -> None:
     assert calls == []
 
 
-def test_tool_call_total_limit_rejects_after_previous_rounds() -> None:
+def test_tool_call_total_limit_is_per_turn_even_when_duplicates_are_skipped() -> None:
     calls = []
     registry = action_registry(calls)
-    responses = iter([tool_calls_response(4), tool_calls_response(4, 4), tool_calls_response(1, 8)])
+    responses = iter(
+        [
+            tool_calls_response(4),
+            tool_calls_response(4, 4),
+            tool_calls_response(1, 8),
+        ]
+    )
     llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
 
     with pytest.raises(LLMError, match="nesta conversa"):
         llm.chat("faça", registry)
-    assert len(calls) == 8
+    assert len(calls) == 1
 
 
-def test_live_requirement_restricts_first_request_and_allows_final_round() -> None:
+def test_duplicate_tool_call_is_reported_without_second_execution() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(
+        Tool("inspect", "inspect", {"type": "object"}, RiskLevel.SAFE, lambda **_: calls.append(1) or {"ok": True})
+    )
+    responses = iter(
+        [
+            tool_calls_response(1, name="inspect"),
+            tool_calls_response(1, name="inspect"),
+            httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]}),
+        ]
+    )
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat("inspecione", registry) == "done"
+    assert calls == [1]
+    duplicate = json.loads(requests[2]["messages"][-1]["content"])
+    assert duplicate["status"] == "duplicate_skipped"
+    assert "no intervening state-changing action" in duplicate["reason"]
+    assert llm._active_turn is None
+
+
+def test_state_changing_tool_can_run_again_after_epoch_changes() -> None:
+    calls = []
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            "change",
+            "change",
+            {"type": "object"},
+            RiskLevel.SAFE,
+            lambda **_: calls.append(1) or {"changed": True},
+            mutates_state=True,
+        )
+    )
+    responses = iter(
+        [
+            tool_calls_response(1, name="change"),
+            tool_calls_response(1, name="change"),
+            httpx.Response(200, json={"choices": [{"message": {"content": "done"}}]}),
+        ]
+    )
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+    assert llm.chat("mude", registry) == "done"
+    assert calls == [1, 1]
+
+
+def test_agent_uses_auto_and_exposes_all_available_tools() -> None:
     requests = []
     registry = ToolRegistry()
     registry.register(Tool("get_system_status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: {"memory": 42}))
@@ -393,27 +452,24 @@ def test_live_requirement_restricts_first_request_and_allows_final_round() -> No
 
     llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
     assert llm.chat("Quanta RAM estou usando?", registry) == "42%"
-    assert [item["function"]["name"] for item in requests[0]["tools"]] == ["get_system_status"]
-    assert requests[0]["tool_choice"] == "required"
+    assert [item["function"]["name"] for item in requests[0]["tools"]] == [
+        "get_system_status",
+        "get_top_memory_processes",
+    ]
+    assert requests[0]["tool_choice"] == "auto"
     assert requests[1]["tool_choice"] == "auto"
 
 
-def test_live_requirement_rejects_text_only_response() -> None:
-    responses = iter(
-        [
-            httpx.Response(200, json={"choices": [{"message": {"content": "acho que está em 42%"}}]}),
-            httpx.Response(200, json={"choices": [{"message": {"content": "ainda sem consulta"}}]}),
-        ]
-    )
+def test_agent_can_answer_without_tool_when_model_chooses_text() -> None:
+    response = httpx.Response(200, json={"choices": [{"message": {"content": "acho que está em 42%"}}]})
     registry = ToolRegistry()
     registry.register(Tool("get_system_status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
-    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: response)))
 
-    with pytest.raises(LLMError, match="estado atual"):
-        llm.chat("Quanta RAM estou usando?", registry)
+    assert llm.chat("Quanta RAM estou usando?", registry) == "acho que está em 42%"
 
 
-def test_live_requirement_rejects_wrong_tool_without_execution() -> None:
+def test_agent_can_choose_any_registered_tool() -> None:
     calls = []
     registry = ToolRegistry()
     registry.register(
@@ -422,49 +478,28 @@ def test_live_requirement_rejects_wrong_tool_without_execution() -> None:
     registry.register(
         Tool("get_top_memory_processes", "ranking", {"type": "object"}, RiskLevel.SAFE, lambda: calls.append("top"))
     )
-    responses = iter(
-        [
-            httpx.Response(
-                200,
-                json={
-                    "choices": [
-                        {
-                            "message": {
-                                "tool_calls": [
-                                    {
-                                        "id": "1",
-                                        "function": {"name": "get_top_memory_processes", "arguments": "{}"},
-                                    }
-                                ]
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "1",
+                                "function": {"name": "get_top_memory_processes", "arguments": "{}"},
                             }
-                        }
-                    ]
-                },
-            ),
-            httpx.Response(
-                200,
-                json={
-                    "choices": [
-                        {
-                            "message": {
-                                "tool_calls": [
-                                    {
-                                        "id": "2",
-                                        "function": {"name": "get_top_memory_processes", "arguments": "{}"},
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                },
-            ),
-        ]
+                        ]
+                    }
+                }
+            ]
+        },
     )
-    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: response)))
 
-    with pytest.raises(LLMError, match="não permitida"):
+    with pytest.raises(LLMError):
         llm.chat("Quanta RAM estou usando?", registry)
-    assert calls == []
+    assert calls == ["top"]
 
 
 def test_offline_and_invalid_response() -> None:
@@ -478,15 +513,18 @@ def test_offline_and_invalid_response() -> None:
         client(httpx.Response(200, json={"bad": []})).chat("oi", ToolRegistry())
 
 
-def test_unsupported_capability_returns_deterministic_limit_without_http_request() -> None:
+def test_unavailable_capability_is_left_to_the_model() -> None:
     calls = []
-    transport = httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(500))
+    transport = httpx.MockTransport(
+        lambda request: calls.append(request)
+        or httpx.Response(200, json={"choices": [{"message": {"content": "não sei"}}]})
+    )
     llm = LLMClient(load_config().llm, httpx.Client(transport=transport))
 
     answer = llm.chat("Quantas abas estão abertas no Firefox?", ToolRegistry())
 
-    assert answer == "Não consigo verificar quantas abas estão abertas com as ferramentas atuais."
-    assert calls == []
+    assert answer == "não sei"
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

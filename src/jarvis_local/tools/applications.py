@@ -81,14 +81,15 @@ def _processes_for(process_names: tuple[str, ...], process_iter: Callable[..., A
 def list_running_applications(
     catalog: ApplicationCatalog, process_iter: Callable[..., Any] | None = None
 ) -> dict[str, list[dict[str, Any]]]:
-    counts = {alias: 0 for alias in catalog.aliases()}
+    summaries = catalog.list()
+    counts = {item.alias: 0 for item in summaries}
     names_to_aliases: dict[str, list[str]] = {}
-    for alias in catalog.aliases():
-        for process_name in catalog.resolve(alias).process_names:
+    for item in summaries:
+        for process_name in catalog.resolve(item.alias).process_names:
             normalized = process_name.strip().casefold()
-            names_to_aliases.setdefault(normalized, []).append(alias)
+            names_to_aliases.setdefault(normalized, []).append(item.alias)
             if normalized.endswith(".exe"):
-                names_to_aliases.setdefault(normalized[:-4], []).append(alias)
+                names_to_aliases.setdefault(normalized[:-4], []).append(item.alias)
     for process in _process_iter(process_iter)(["pid", "name", "exe", "cmdline"]):
         try:
             aliases = set()
@@ -101,12 +102,12 @@ def list_running_applications(
     return {
         "applications": [
             {
-                "alias": alias,
-                "name": catalog.resolve(alias).display_name,
-                "running": counts[alias] > 0,
-                "instances": counts[alias],
+                "alias": item.alias,
+                "name": item.name,
+                "running": counts[item.alias] > 0,
+                "instances": counts[item.alias],
             }
-            for alias in catalog.aliases()
+            for item in summaries
         ]
     }
 
@@ -216,7 +217,8 @@ def build_application_tools(
     tools: list[Tool] = [
         Tool(
             "list_applications",
-            "Lista aplicativos configurados que a Yuki pode abrir.",
+            "Lista aliases de aplicativos conhecidos e autorizados para abertura. Não inicia nada e não lista todos os "
+            "processos.",
             {"type": "object", "properties": {}, "additionalProperties": False},
             RiskLevel.SAFE,
             lambda: list_applications(catalog),
@@ -226,7 +228,9 @@ def build_application_tools(
         tools.append(
             Tool(
                 "open_application",
-                "Inicia um aplicativo previamente configurado, após confirmação do usuário.",
+                "Inicia um aplicativo conhecido pelo alias, após confirmação. Use apenas para ação explícita; "
+                "o alias vem "
+                "do catálogo e não há shell ou comando arbitrário.",
                 application_parameters,
                 RiskLevel.CONFIRM,
                 lambda application: _open_application(catalog, launcher, application),
@@ -234,13 +238,15 @@ def build_application_tools(
                 confirmation_description=lambda application: (
                     f"A Yuki quer abrir:\n\n{catalog.resolve(application).display_name}"
                 ),
+                mutates_state=True,
             )
         )
     close_aliases = [alias for alias in catalog.aliases() if catalog.resolve(alias).process_names]
     tools.append(
         Tool(
             "list_running_applications",
-            "Lista os aplicativos configurados que estão em execução.",
+            "Observa quais aplicativos conhecidos estão em execução e conta instâncias. Não lê janelas, abas ou "
+            "conteúdo interno.",
             {"type": "object", "properties": {}, "additionalProperties": False},
             RiskLevel.SAFE,
             lambda: list_running_applications(catalog, process_iter),
@@ -249,7 +255,9 @@ def build_application_tools(
     tools.append(
         Tool(
             "close_application",
-            "Fecha uma aplicação configurada após confirmação do usuário.",
+            "Fecha processos de um aplicativo conhecido, após confirmação e somente quando há process_names "
+            "confiáveis. "
+            "Pode deixar instâncias vivas e não força encerramento.",
             {
                 "type": "object",
                 "properties": {
@@ -270,12 +278,14 @@ def build_application_tools(
                 f"{catalog.resolve(application).display_name}\n\n"
                 "Isso pode encerrar processos do aplicativo e causar perda de dados não salvos."
             ),
+            mutates_state=True,
         )
     )
     tools.append(
         Tool(
             "open_url",
-            "Abre uma URL HTTP ou HTTPS no navegador, após confirmação do usuário.",
+            "Abre uma URL http/https no navegador, após confirmação. Não aceita credenciais, shell, arquivos locais ou "
+            "outros esquemas.",
             {
                 "type": "object",
                 "properties": {"url": {"type": "string", "maxLength": MAX_URL_LENGTH}},
@@ -285,6 +295,7 @@ def build_application_tools(
             RiskLevel.CONFIRM,
             lambda url: _open_url(opener, url),
             validate=validate_url,
+            mutates_state=True,
         )
     )
     return tuple(tools)

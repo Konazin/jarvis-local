@@ -144,7 +144,7 @@ def test_mid_turn_tool_result_is_compacted_before_second_post() -> None:
     assert llm.last_metrics.tool_results_compacted == 1
 
 
-def test_auto_requests_send_only_preferred_tool_schemas() -> None:
+def test_auto_requests_send_all_available_tool_schemas() -> None:
     requests = []
 
     def handler(request):
@@ -160,4 +160,6 @@ def test_auto_requests_send_only_preferred_tool_schemas() -> None:
     assert [item["function"]["name"] for item in requests[0]["tools"]] == [
         "get_audio_status",
         "set_volume",
+        "get_network_status",
+        "get_disk_usage",
     ]

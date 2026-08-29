@@ -10,6 +10,14 @@ class RiskLevel(StrEnum):
 
 
 @dataclass(frozen=True)
+class ToolObservation:
+    """A tool result that can carry short text plus an in-memory image."""
+
+    text: str
+    image: Any | None = None
+
+
+@dataclass(frozen=True)
 class Tool:
     name: str
     description: str
@@ -19,6 +27,7 @@ class Tool:
     validate: Callable[..., Any] | None = None
     precheck: Callable[..., dict[str, Any] | None] | None = None
     confirmation_description: Callable[..., str] | None = None
+    mutates_state: bool = False
 
     def schema(self) -> dict[str, Any]:
         return {

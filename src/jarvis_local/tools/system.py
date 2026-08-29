@@ -186,50 +186,53 @@ _TOP_MEMORY_PARAMETERS = {
 
 SYSTEM_STATUS_TOOL = Tool(
     "get_system_status",
-    "Retorna o uso total/global atual de CPU e memória RAM do computador. Não use para listar processos.",
+    "Observa o uso global atual de CPU e memória RAM. Use para carga total do computador; "
+    "não lista processos nem identifica qual aplicativo consome memória.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_status,
 )
 SYSTEM_INFO_TOOL = Tool(
     "get_system_info",
-    "Retorna informações do sistema operacional e da arquitetura deste computador.",
+    "Observa sistema operacional, versão, arquitetura e versão do Python. Não informa estado de processos ou hardware "
+    "em tempo real.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_info,
 )
 DISK_USAGE_TOOL = Tool(
     "get_disk_usage",
-    "Retorna o espaço usado e livre no disco; use para perguntas sobre armazenamento.",
+    "Observa espaço total, usado e livre em um disco. Use para armazenamento; não procura arquivos nem altera dados.",
     _DISK_PARAMETERS,
     RiskLevel.SAFE,
     get_disk_usage,
 )
 BATTERY_STATUS_TOOL = Tool(
     "get_battery_status",
-    "Retorna a carga e o estado atual da bateria, inclusive se está conectada à tomada.",
+    "Observa carga, alimentação e tempo restante da bateria. Pode retornar indisponível em desktops sem bateria.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_battery_status,
 )
 SYSTEM_UPTIME_TOOL = Tool(
     "get_system_uptime",
-    "Retorna há quanto tempo este computador está ligado (uptime).",
+    "Observa há quanto tempo o computador está ligado. Não substitui outras medições atuais do sistema.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_uptime,
 )
 FIND_PROCESSES_TOOL = Tool(
     "find_processes",
-    "Procura processos em execução pelo nome para verificar se um aplicativo está rodando. "
-    "Não inspeciona abas, URLs, documentos, conteúdo ou elementos da interface de aplicativos.",
+    "Observa processos em execução e procura por nome para verificar se um aplicativo está rodando. "
+    "Não fornece abas do navegador, URLs, documentos, conteúdo visual ou estado interno da aplicação.",
     _PROCESS_SEARCH_PARAMETERS,
     RiskLevel.SAFE,
     find_processes,
 )
 TOP_MEMORY_PROCESSES_TOOL = Tool(
     "get_top_memory_processes",
-    "Retorna os processos que mais consomem memória RAM. Não use para o uso total do computador.",
+    "Observa os processos que mais consomem memória RAM. Use para ranking por processo; não use para o uso total do "
+    "computador.",
     _TOP_MEMORY_PARAMETERS,
     RiskLevel.SAFE,
     get_top_memory_processes,

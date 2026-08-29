@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
-from .base import RiskLevel
+from .base import RiskLevel, ToolObservation
 from .registry import ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -97,11 +97,12 @@ class ToolExecutor:
             except Exception as exc:
                 log.exception("tool failed: %s", name)
                 return {"status": "error", "error": str(exc)}
-            try:
-                json.dumps(result)
-            except (TypeError, ValueError) as exc:
-                log.exception("tool failed: %s", name)
-                return {"status": "error", "reason": "non_serializable_result", "error": str(exc)}
+            if not isinstance(result, ToolObservation):
+                try:
+                    json.dumps(result)
+                except (TypeError, ValueError) as exc:
+                    log.exception("tool failed: %s", name)
+                    return {"status": "error", "reason": "non_serializable_result", "error": str(exc)}
         finally:
             self._notify(on_execution_finish, name)
         log.info("tool executed: %s", name)
