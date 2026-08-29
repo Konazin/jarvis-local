@@ -8,7 +8,9 @@ from enum import StrEnum
 
 
 class CaptureTarget(StrEnum):
-    ACTIVE_WINDOW = "ACTIVE_WINDOW"
+    PREVIOUS_WINDOW = "previous_window"
+    ACTIVE_WINDOW = "active_window"
+    FULL_SCREEN = "full_screen"
 
 
 @dataclass(frozen=True)

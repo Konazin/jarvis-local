@@ -203,6 +203,7 @@ class VisionConfig:
     enabled: bool = False
     retention_seconds: float = 0.0
     capture_policy: str = "explicit"
+    max_capture_dimension: int = 1920
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -216,6 +217,12 @@ class VisionConfig:
             or not 0 <= self.retention_seconds <= 1800
         ):
             raise ValueError("vision.retention_seconds deve estar entre 0 e 1800")
+        if (
+            isinstance(self.max_capture_dimension, bool)
+            or not isinstance(self.max_capture_dimension, int)
+            or not 256 <= self.max_capture_dimension <= 8192
+        ):
+            raise ValueError("vision.max_capture_dimension deve estar entre 256 e 8192")
 
 
 @dataclass(frozen=True)

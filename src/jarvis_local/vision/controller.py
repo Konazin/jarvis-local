@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from ..config import VisionConfig
 from .capture import ScreenCaptureService, VisionRetention
+from .models import CaptureTarget
 
 log = logging.getLogger(__name__)
 
@@ -19,10 +20,18 @@ class VisionWorker(QObject):
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, service: ScreenCaptureService, retention: VisionRetention) -> None:
+    def __init__(
+        self,
+        service: ScreenCaptureService,
+        retention: VisionRetention,
+        target: CaptureTarget,
+        max_dimension: int,
+    ) -> None:
         super().__init__()
         self.service = service
         self.retention = retention
+        self.target = target
+        self.max_dimension = max_dimension
         self._cancelled = threading.Event()
 
     def cancel(self) -> None:
@@ -30,7 +39,12 @@ class VisionWorker(QObject):
 
     def run(self) -> None:
         try:
-            capture = self.service.capture_active_window()
+            capture_method = getattr(self.service, "capture", None)
+            capture = (
+                capture_method(self.target, self.max_dimension)
+                if capture_method is not None
+                else self.service.capture_active_window()
+            )
             if self._cancelled.is_set():
                 return
             self.retention.retain(capture)
@@ -79,11 +93,11 @@ class VisionController(QObject):
     def busy(self) -> bool:
         return self._thread is not None
 
-    def start(self) -> bool:
+    def start(self, target: CaptureTarget = CaptureTarget.PREVIOUS_WINDOW) -> bool:
         if not self.available or self.busy:
             return False
         self._started_at = time.perf_counter()
-        worker = VisionWorker(self.service, self.retention)
+        worker = VisionWorker(self.service, self.retention, target, self.config.max_capture_dimension)
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)

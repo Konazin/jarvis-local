@@ -14,6 +14,7 @@ from .tools.desktop import DESKTOP_TOOLS
 from .tools.executor import ToolExecutor
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_TOOLS
+from .tools.vision import VisionAccess, build_vision_tools
 from .tts.manager import TTSManager
 from .ui.confirmation import ConfirmationBridge
 from .ui.tray import Tray
@@ -35,6 +36,9 @@ def main() -> None:
     )
     for tool in build_application_tools(catalog):
         tools.register(tool)
+    vision_access = VisionAccess(config.vision, session_authorized=config.vision.capture_policy == "session")
+    for tool in build_vision_tools(config.vision, access=vision_access):
+        tools.register(tool)
     app = QApplication(sys.argv)
     confirmation = ConfirmationBridge()
     executor = ToolExecutor(tools, approval_handler=confirmation.request)
@@ -44,6 +48,7 @@ def main() -> None:
         tool_executor=executor,
         capabilities_provider=lambda: runtime.capabilities,
         context_config=config.context,
+        vision_permission=vision_access,
     )
     session = ConversationSession(config.conversation, config.context)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)

@@ -9,6 +9,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from jarvis_local.config import VisionConfig
+from jarvis_local.tools.base import ToolObservation
+from jarvis_local.tools.vision import VisionAccess, build_vision_tools
 from jarvis_local.vision import (
     CaptureTarget,
     ScreenCapture,
@@ -125,3 +127,49 @@ def test_vision_controller_captures_off_main_thread_without_persisting_by_defaul
     assert events[1].target is CaptureTarget.ACTIVE_WINDOW
     assert not controller.busy
     controller.close()
+
+
+def test_observe_screen_is_permission_gated_and_returns_multimodal_observation():
+    config = VisionConfig(enabled=True, capture_policy="explicit")
+    access = VisionAccess(config)
+
+    class Service:
+        def __init__(self):
+            self.targets = []
+
+        def capture(self, target, max_dimension):
+            self.targets.append((target, max_dimension))
+            return capture()
+
+    service = Service()
+    tool = build_vision_tools(config, service=service, access=access)[0]
+    assert tool.execute() == {"status": "blocked", "reason": "visual_permission_required"}
+
+    access.begin_turn("O que você vê nessa janela?")
+    result = tool.execute(target="previous_window")
+    assert isinstance(result, ToolObservation)
+    assert result.image is not None
+    assert service.targets == [("previous_window", 1920)]
+    access.end_turn()
+
+
+def test_observe_screen_does_not_grant_permission_for_normal_question():
+    config = VisionConfig(enabled=True, capture_policy="explicit")
+    access = VisionAccess(config)
+    access.begin_turn("Quanto de RAM estou usando?")
+    tool = build_vision_tools(config, service=object(), access=access)[0]
+
+    assert tool.execute() == {"status": "blocked", "reason": "visual_permission_required"}
+
+
+def test_capture_pixmap_respects_max_dimension_without_desktop_access():
+    app = QApplication.instance() or QApplication([])
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+
+    pixmap = QPixmap(400, 200)
+    pixmap.fill(Qt.GlobalColor.black)
+    result = ScreenCaptureService._capture_pixmap(pixmap, CaptureTarget.FULL_SCREEN, 100)
+
+    assert app is not None
+    assert (result.width, result.height) == (100, 50)
