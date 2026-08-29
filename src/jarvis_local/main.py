@@ -3,7 +3,8 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
-from .apps.catalog import ApplicationCatalog, ApplicationDefinition
+from .apps.catalog import ApplicationDefinition
+from .apps.discovery import discover_applications
 from .config import load_config, resolve_config_path
 from .core.assistant import Assistant
 from .llm.client import LLMClient
@@ -30,9 +31,12 @@ def main() -> None:
         tools.register(tool)
     for tool in DESKTOP_TOOLS:
         tools.register(tool)
-    catalog = ApplicationCatalog(
-        ApplicationDefinition(alias, application.name, application.command, application.process_names)
-        for alias, application in config.applications.items()
+    catalog = discover_applications(
+        (
+            ApplicationDefinition(alias, application.name, application.command, application.process_names)
+            for alias, application in config.applications.items()
+        ),
+        include_flatpak=True,
     )
     for tool in build_application_tools(catalog):
         tools.register(tool)

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
-_ALIAS_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_ALIAS_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
 
 
 def normalize_alias(alias: str) -> str:
@@ -23,6 +23,10 @@ class ApplicationDefinition:
     display_name: str
     command: tuple[str, ...]
     process_names: tuple[str, ...] = ()
+    startup_wm_class: str = ""
+    desktop_id: str = ""
+    source: str = "explicit"
+    aliases: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "alias", normalize_alias(self.alias))
@@ -46,6 +50,18 @@ class ApplicationDefinition:
                 raise ValueError("process_names não podem conter caracteres de controle")
             normalized_names.append(process_name.strip().casefold())
         object.__setattr__(self, "process_names", tuple(normalized_names))
+        for field in ("startup_wm_class", "desktop_id", "source"):
+            value = getattr(self, field)
+            if not isinstance(value, str):
+                raise ValueError(f"{field} deve ser uma string")
+        if not isinstance(self.aliases, (tuple, list)):
+            raise ValueError("aliases deve ser uma lista ou tupla")
+        normalized_aliases = []
+        for alias in self.aliases:
+            normalized_alias = normalize_alias(alias)
+            if normalized_alias != self.alias and normalized_alias not in normalized_aliases:
+                normalized_aliases.append(normalized_alias)
+        object.__setattr__(self, "aliases", tuple(normalized_aliases))
 
 
 @dataclass(frozen=True)
@@ -60,9 +76,10 @@ class ApplicationCatalog:
         for definition in definitions:
             if not isinstance(definition, ApplicationDefinition):
                 raise ValueError("catálogo aceita ApplicationDefinition")
-            if definition.alias in entries:
-                raise ValueError(f"alias duplicado: {definition.alias}")
-            entries[definition.alias] = definition
+            for alias in (definition.alias, *definition.aliases):
+                if alias in entries:
+                    raise ValueError(f"alias duplicado: {alias}")
+                entries[alias] = definition
         self._definitions: Mapping[str, ApplicationDefinition] = MappingProxyType(entries)
 
     def resolve(self, alias: str) -> ApplicationDefinition:
@@ -76,4 +93,11 @@ class ApplicationCatalog:
         return tuple(self._definitions)
 
     def list(self) -> tuple[ApplicationSummary, ...]:
-        return tuple(ApplicationSummary(item.alias, item.display_name) for item in self._definitions.values())
+        listed: list[ApplicationSummary] = []
+        seen: set[str] = set()
+        for item in self._definitions.values():
+            if item.alias in seen:
+                continue
+            seen.add(item.alias)
+            listed.append(ApplicationSummary(item.alias, item.display_name))
+        return tuple(listed)
