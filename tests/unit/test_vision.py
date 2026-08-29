@@ -101,6 +101,7 @@ def test_vision_config_limits_debug_retention():
     assert VisionConfig().retention_seconds == 0
     with pytest.raises(ValueError):
         VisionConfig(retention_seconds=1801)
+    assert not VisionController(VisionConfig(enabled=True, capture_policy="disabled")).available
 
 
 def test_vision_controller_captures_off_main_thread_without_persisting_by_default():

@@ -39,8 +39,13 @@ def main() -> None:
     confirmation = ConfirmationBridge()
     executor = ToolExecutor(tools, approval_handler=confirmation.request)
     runtime = LLMRuntimeManager(config.llm)
-    llm = LLMClient(config.llm, tool_executor=executor, capabilities_provider=lambda: runtime.capabilities)
-    session = ConversationSession(config.conversation)
+    llm = LLMClient(
+        config.llm,
+        tool_executor=executor,
+        capabilities_provider=lambda: runtime.capabilities,
+        context_config=config.context,
+    )
+    session = ConversationSession(config.conversation, config.context)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)
     assistant = Assistant(llm, tools, tts, runtime=runtime, session=session)
     llm.on_tool_start, llm.on_tool_finish = assistant.tool_start, assistant.tool_finish

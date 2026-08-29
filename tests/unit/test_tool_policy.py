@@ -60,3 +60,13 @@ def test_conceptual_tab_question_is_not_blocked() -> None:
     requirement = ToolUsePolicy().evaluate("Explique o que é uma aba do navegador.")
 
     assert requirement.mode is ToolRequirementMode.AUTO
+
+
+def test_auto_tool_schema_preferences_are_narrow() -> None:
+    assert ToolUsePolicy().evaluate("Abra o Firefox").preferred_tools == ("open_application",)
+    assert ToolUsePolicy().evaluate("Qual o volume atual?").preferred_tools == (
+        "get_audio_status",
+        "set_volume",
+        "toggle_mute",
+    )
+    assert ToolUsePolicy().evaluate("Explique memória RAM").preferred_tools == ()

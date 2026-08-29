@@ -45,19 +45,23 @@ class ConversationConfig:
 
 @dataclass(frozen=True)
 class ContextConfig:
-    soft_limit_ratio: float = 0.85
+    enabled: bool = True
+    soft_limit_ratio: float = 0.82
     recent_turns: int = 3
-    summary_max_estimated_tokens: int = 256
+    summary_max_estimated_tokens: int = 384
+    max_tool_result_estimated_tokens: int = 512
     prune_tool_schemas: bool = True
 
     def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("context.enabled deve ser booleano")
         if (
             isinstance(self.soft_limit_ratio, bool)
             or not isinstance(self.soft_limit_ratio, (int, float))
             or not math.isfinite(self.soft_limit_ratio)
-            or not 0 < self.soft_limit_ratio <= 1
+            or not 0.5 <= self.soft_limit_ratio < 1
         ):
-            raise ValueError("context.soft_limit_ratio deve estar entre 0 e 1")
+            raise ValueError("context.soft_limit_ratio deve estar entre 0.5 e 1.0")
         if isinstance(self.recent_turns, bool) or not isinstance(self.recent_turns, int) or self.recent_turns < 1:
             raise ValueError("context.recent_turns deve ser um inteiro positivo")
         if (
@@ -66,6 +70,12 @@ class ContextConfig:
             or self.summary_max_estimated_tokens < 1
         ):
             raise ValueError("context.summary_max_estimated_tokens deve ser positivo")
+        if (
+            isinstance(self.max_tool_result_estimated_tokens, bool)
+            or not isinstance(self.max_tool_result_estimated_tokens, int)
+            or self.max_tool_result_estimated_tokens < 1
+        ):
+            raise ValueError("context.max_tool_result_estimated_tokens deve ser positivo")
         if not isinstance(self.prune_tool_schemas, bool):
             raise ValueError("context.prune_tool_schemas deve ser booleano")
 
@@ -197,8 +207,8 @@ class VisionConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
             raise ValueError("vision.enabled deve ser booleano")
-        if self.capture_policy not in {"explicit", "always"}:
-            raise ValueError("vision.capture_policy deve ser 'explicit' ou 'always'")
+        if self.capture_policy not in {"disabled", "explicit", "session"}:
+            raise ValueError("vision.capture_policy deve ser 'disabled', 'explicit' ou 'session'")
         if (
             isinstance(self.retention_seconds, bool)
             or not isinstance(self.retention_seconds, (int, float))

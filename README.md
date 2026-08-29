@@ -79,13 +79,15 @@ O backend de wake é opcional e configurado em `[wake]`, sem download automátic
 
 ### Percepção visual
 
-`vision.enabled = false` mantém a visão desligada por padrão. O botão `Olhar` e intents explícitos como “o que você vê” capturam somente a janela ativa via X11, em PNG na memória, e enviam texto mais imagem ao mesmo llama-server quando `/props` anuncia `supports_vision = true`. A `ConversationSession` nunca recebe bytes ou base64. Wayland retorna indisponibilidade clara; retenção de debug é opcional, fica em cache XDG e expira em no máximo 1800 segundos.
+`vision.enabled = false` mantém a visão desligada por padrão. O botão `Olhar` e intents explícitos como “o que você vê” capturam somente a janela ativa via X11, em PNG na memória, e enviam texto mais imagem ao mesmo llama-server quando `/props` anuncia `modalities.vision = true` (com fallback para os formatos antigos). A `ConversationSession` nunca recebe bytes ou base64. Wayland retorna indisponibilidade clara; retenção de debug é opcional, fica em cache XDG e expira em no máximo 1800 segundos.
 
 Wake/VAD são leves e transitórios; Whisper e captura visual não ficam residentes. O llama-server e o Kokoro seguem sendo os componentes residentes já existentes. Não há benchmark de hardware embutido nesta etapa.
 
 ### Contexto da sessão
 
-O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O histórico é limitado por quantidade de turns e uma estimativa local de tokens; não é persistido em disco e desaparece ao fechar o aplicativo.
+O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O `ContextCompactor` usa um limite suave (82% por padrão) antes do hard limit de `llm.context_size`, remove somente turns antigos completos, reduz schemas de tools por intenção e compacta resultados JSON grandes antes de cada POST, inclusive no meio de uma rodada. Preferências e decisões antigas podem entrar em um resumo determinístico curto; fatos live continuam exigindo uma tool atual. Nada disso é persistido em disco e desaparece ao fechar o aplicativo.
+
+Para o setup multimodal atual, `config.example.toml` documenta `Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M` como opção. O exemplo mantém visão desligada por segurança; ative-a localmente somente quando o `/props` do servidor anunciar a modalidade visual.
 
 ## Testes
 

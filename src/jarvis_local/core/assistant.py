@@ -84,7 +84,9 @@ class Assistant:
         try:
             if self.runtime is not None:
                 self.runtime.ensure_ready()
-            history = self.session.messages() if self.session is not None else None
+            history = None
+            if self.session is not None:
+                history = getattr(self.session, "context_messages", self.session.messages)()
             if image is None:
                 response = self.llm.chat(text, self.tools, history=history)
             else:

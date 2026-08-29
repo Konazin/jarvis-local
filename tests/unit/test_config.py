@@ -23,6 +23,8 @@ def test_defaults() -> None:
     assert config.llm.require_tool_support
     assert config.conversation.max_turns == 8
     assert config.context.recent_turns == 3
+    assert config.context.soft_limit_ratio == 0.82
+    assert config.context.max_tool_result_estimated_tokens == 512
     assert config.tts.voice == "pf_dora"
     assert config.tts.mode == "resident"
     assert config.audio.input_device == "default"
@@ -42,7 +44,9 @@ def test_context_and_vision_config_validate() -> None:
     with pytest.raises(ValueError):
         ContextConfig(soft_limit_ratio=0)
     with pytest.raises(ValueError):
-        VisionConfig(capture_policy="background")
+        ContextConfig(soft_limit_ratio=1)
+    with pytest.raises(ValueError):
+        VisionConfig(capture_policy="always")
 
 
 @pytest.mark.parametrize("field", ["threshold", "cooldown_seconds", "pre_roll_ms"])

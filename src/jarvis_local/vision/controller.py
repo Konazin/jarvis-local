@@ -73,7 +73,7 @@ class VisionController(QObject):
 
     @property
     def available(self) -> bool:
-        return self.config.enabled
+        return self.config.enabled and self.config.capture_policy != "disabled"
 
     @property
     def busy(self) -> bool:

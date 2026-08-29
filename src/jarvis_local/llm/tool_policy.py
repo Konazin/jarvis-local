@@ -17,6 +17,7 @@ class ToolRequirement:
     allowed_tools: tuple[str, ...] = ()
     mode: ToolRequirementMode | None = None
     reason: str | None = None
+    preferred_tools: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.mode is None:
@@ -64,6 +65,19 @@ class ToolUsePolicy:
         if _has_any(text, "música anterior", "musica anterior", "faixa anterior"):
             return ToolRequirement(True, ("media_previous",))
 
+        if _has_any(text, "abra", "abrir", "inicie", "iniciar", "execute", "executar"):
+            return ToolRequirement(False, preferred_tools=("open_application",))
+        if _has_any(text, "volume", "áudio", "audio", "mudo", "mutado"):
+            return ToolRequirement(
+                False, preferred_tools=("get_audio_status", "set_volume", "toggle_mute")
+            )
+        if _has_any(text, "música", "musica", "faixa", "player"):
+            return ToolRequirement(
+                False, preferred_tools=("media_play_pause", "media_next", "media_previous")
+            )
+        if _has_any(text, "rede", "internet", "conectado", "conexão", "conexao"):
+            return ToolRequirement(False, preferred_tools=("get_network_status",))
+
         if _has_any(text, "processo", "processos", "aplicativo", "aplicativos", "programa", "programas"):
             if _has_any(text, "ram", "memoria") and _has_any(
                 text, "mais", "maior", "usa", "usam", "consome", "consomem", "consumindo"
@@ -97,6 +111,11 @@ class ToolUsePolicy:
 
         if _has_any(text, "aberto", "aberta", "rodando", "execucao") and len(text.split()) >= 3:
             return ToolRequirement(True, ("find_processes",))
+
+        if _has_any(text, "processo", "processos", "aplicativo", "aplicativos", "programa", "programas"):
+            return ToolRequirement(
+                False, preferred_tools=("find_processes", "list_running_applications")
+            )
 
         return ToolRequirement(False)
 
