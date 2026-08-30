@@ -89,5 +89,6 @@ def build_vision_tools(
             lambda target=CaptureTarget.PREVIOUS_WINDOW.value: _observe_screen(
                 selected_access, selected_service, config.max_capture_dimension, target
             ),
+            domain="vision",
         ),
     )

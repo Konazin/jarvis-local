@@ -160,6 +160,7 @@ DESKTOP_TOOLS = (
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_active_window,
+        domain="desktop",
     ),
     Tool(
         "get_audio_status",
@@ -167,6 +168,7 @@ DESKTOP_TOOLS = (
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_audio_status,
+        domain="media",
     ),
     Tool(
         "set_volume",
@@ -177,6 +179,7 @@ DESKTOP_TOOLS = (
         validate=lambda percent: _validate_percent(percent),
         confirmation_description=lambda percent: f"A Yuki quer definir o volume para {percent:g}%.",
         mutates_state=True,
+        domain="media",
     ),
     Tool(
         "toggle_mute",
@@ -185,6 +188,7 @@ DESKTOP_TOOLS = (
         RiskLevel.CONFIRM,
         toggle_mute,
         mutates_state=True,
+        domain="media",
     ),
     Tool(
         "media_play_pause",
@@ -193,6 +197,7 @@ DESKTOP_TOOLS = (
         RiskLevel.CONFIRM,
         media_play_pause,
         mutates_state=True,
+        domain="media",
     ),
     Tool(
         "media_next",
@@ -201,6 +206,7 @@ DESKTOP_TOOLS = (
         RiskLevel.CONFIRM,
         media_next,
         mutates_state=True,
+        domain="media",
     ),
     Tool(
         "media_previous",
@@ -209,6 +215,7 @@ DESKTOP_TOOLS = (
         RiskLevel.CONFIRM,
         media_previous,
         mutates_state=True,
+        domain="media",
     ),
     Tool(
         "get_network_status",

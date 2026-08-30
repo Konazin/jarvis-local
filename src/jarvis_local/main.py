@@ -1,5 +1,6 @@
 import logging
 import sys
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
@@ -8,11 +9,14 @@ from .apps.discovery import discover_applications
 from .config import load_config, resolve_config_path
 from .core.assistant import Assistant
 from .llm.client import LLMClient
+from .llm.domain_router import DomainRouter
 from .llm.runtime import LLMRuntimeManager
 from .llm.session import ConversationSession
+from .plugins import PluginLoader
 from .tools.applications import build_application_tools
 from .tools.desktop import DESKTOP_TOOLS
 from .tools.executor import ToolExecutor
+from .tools.files import FILES_TOOLS
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_TOOLS
 from .tools.vision import VisionAccess, build_vision_tools
@@ -43,6 +47,11 @@ def main() -> None:
     vision_access = VisionAccess(config.vision, session_authorized=config.vision.capture_policy == "session")
     for tool in build_vision_tools(config.vision, access=vision_access):
         tools.register(tool)
+    for tool in FILES_TOOLS:
+        tools.register(tool)
+    plugin_loader = PluginLoader(Path(__file__).resolve().parents[2] / "plugins", set(tools.names()))
+    for tool in plugin_loader.tools():
+        tools.register(tool)
     app = QApplication(sys.argv)
     confirmation = ConfirmationBridge()
     executor = ToolExecutor(tools, approval_handler=confirmation.request)
@@ -53,6 +62,7 @@ def main() -> None:
         capabilities_provider=lambda: runtime.capabilities,
         context_config=config.context,
         vision_permission=vision_access,
+        domain_router=DomainRouter(config.llm),
     )
     session = ConversationSession(config.conversation, config.context)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)

@@ -222,6 +222,7 @@ def build_application_tools(
             {"type": "object", "properties": {}, "additionalProperties": False},
             RiskLevel.SAFE,
             lambda: list_applications(catalog),
+            domain="applications",
         )
     ]
     if catalog.aliases():
@@ -239,6 +240,7 @@ def build_application_tools(
                     f"A Yuki quer abrir:\n\n{catalog.resolve(application).display_name}"
                 ),
                 mutates_state=True,
+                domain="applications",
             )
         )
     close_aliases = [alias for alias in catalog.aliases() if catalog.resolve(alias).process_names]
@@ -250,6 +252,7 @@ def build_application_tools(
             {"type": "object", "properties": {}, "additionalProperties": False},
             RiskLevel.SAFE,
             lambda: list_running_applications(catalog, process_iter),
+            domain="applications",
         )
     )
     tools.append(
@@ -279,6 +282,7 @@ def build_application_tools(
                 "Isso pode encerrar processos do aplicativo e causar perda de dados não salvos."
             ),
             mutates_state=True,
+            domain="applications",
         )
     )
     tools.append(
@@ -296,6 +300,7 @@ def build_application_tools(
             lambda url: _open_url(opener, url),
             validate=validate_url,
             mutates_state=True,
+            domain="browser",
         )
     )
     return tuple(tools)

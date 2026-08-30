@@ -11,11 +11,12 @@ import httpx
 
 from jarvis_local.config import ContextConfig
 from jarvis_local.llm.session import estimate_tokens
-from jarvis_local.tools.base import ToolObservation
+from jarvis_local.tools.base import VALID_TOOL_DOMAINS, ToolObservation
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 
 from .context import ContextCompactionError, ContextCompactor, ContextMetrics, message_estimated_tokens
+from .domain_router import DomainRoute, DomainRouter
 from .tool_policy import ToolAvailabilityPolicy, ToolRequirement
 
 log = logging.getLogger(__name__)
@@ -25,9 +26,29 @@ _RAW_TOOL_RETRY_PROMPT = (
 )
 MAX_TOOL_CALLS_PER_ROUND = 4
 MAX_TOOL_CALLS_TOTAL = 8
+MAX_DOMAIN_EXPANSIONS = 2
+MAX_DOMAINS_PER_TURN = 4
 MAX_USER_ESTIMATED_TOKENS = 1024
 CONTEXT_SAFETY_MARGIN_TOKENS = 64
 IMAGE_ESTIMATED_TOKENS = 512
+_DOMAIN_REQUEST_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "request_tool_domain",
+        "description": "Habilita uma categoria adicional somente quando ela é necessária para concluir o pedido.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "domain": {
+                    "type": "string",
+                    "enum": sorted(VALID_TOOL_DOMAINS),
+                }
+            },
+            "required": ["domain"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
 
@@ -41,6 +62,10 @@ conceitual bastam. Não use uma tool só porque uma palavra relacionada apareceu
 Use tool quando precisar de estado atual, observação externa, ação real ou quando o resultado anterior criar uma
 necessidade.
 Uma tool suficiente é melhor que várias. Depois de responder ao pedido, pare.
+
+As tools são capabilities agrupadas por domínio. Se faltar uma categoria para atingir o objetivo, peça somente a
+categoria necessária com `request_tool_domain`; essa meta-tool não executa ações. O modelo continua escolhendo a tool
+real, e a categoria nova só fica disponível na rodada seguinte.
 
 Tool result é uma observação externa: nunca invente resultado. Se falhar, leia o motivo, não alegue sucesso e tente uma
 alternativa razoável somente se ela existir e fizer sentido. Não repita a mesma tool com os mesmos argumentos sem uma
@@ -91,6 +116,13 @@ class LLMCallMetrics:
     compacted: bool = False
     history_turns_removed: int = 0
     tool_results_compacted: int = 0
+    domains_selected: tuple[str, ...] = ()
+    domains_available: tuple[str, ...] = ()
+    tools_exposed_count: int = 0
+    estimated_tool_schema_tokens: int | None = None
+    domain_expansions: int = 0
+    router_latency_ms: float | None = None
+    router_failure: bool = False
 
 
 class LLMError(RuntimeError):
@@ -100,19 +132,23 @@ class LLMError(RuntimeError):
 @dataclass
 class _TurnState:
     goal: str
+    domains: set[str] | None = None
     tool_round: int = 0
     total_calls: int = 0
+    domain_expansions: int = 0
     state_epoch: int = 0
     fingerprints: dict[str, int] | None = None
     retries: dict[str, int] | None = None
     last_results: dict[str, Any] | None = None
     observations: list[str] | None = None
+    requested_domains: set[str] | None = None
 
     def __post_init__(self) -> None:
         self.fingerprints = {}
         self.retries = {}
         self.last_results = {}
         self.observations = []
+        self.requested_domains = set()
 
 
 class LLMClient:
@@ -129,6 +165,7 @@ class LLMClient:
         tool_policy: ToolAvailabilityPolicy | None = None,
         context_config: ContextConfig | None = None,
         vision_permission=None,
+        domain_router: DomainRouter | None = None,
     ) -> None:
         self.config = config
         self.client = client or httpx.Client(timeout=config.timeout_seconds)
@@ -141,8 +178,13 @@ class LLMClient:
         self.tool_policy = tool_policy or ToolAvailabilityPolicy()
         self.context_config = context_config or ContextConfig()
         self.vision_permission = vision_permission
+        self.domain_router = domain_router
         self._last_metrics: LLMCallMetrics | None = None
         self._last_context_metrics: ContextMetrics | None = None
+        self._last_domain_route: DomainRoute | None = None
+        self._last_available_domains: tuple[str, ...] = ()
+        self._last_tools_exposed_count = 0
+        self._last_domain_expansions = 0
         self._active_turn: _TurnState | None = None
 
     @property
@@ -169,7 +211,15 @@ class LLMClient:
         }
         timing_totals: dict[str, float | None] = {"prompt_ms": None, "predicted_ms": None}
         raw_tool_retry_used = False
+        self._last_tools_exposed_count = 0
+        self._last_domain_expansions = 0
+        if not isinstance(text, str):
+            raise LLMError("mensagem atual invalida")
+        if estimate_tokens(text) > MAX_USER_ESTIMATED_TOKENS:
+            raise LLMError("mensagem atual excede o limite de contexto local")
         requirement = self.tool_policy.evaluate(text)
+        route = self.domain_router.route(text) if self.domain_router is not None else None
+        self._last_domain_route = route
         image_data_url = self._image_data_url(image)
         if image_data_url and not self._is_loopback_endpoint(self.config.base_url):
             raise LLMError("análise visual exige um llama-server local em loopback")
@@ -178,11 +228,14 @@ class LLMClient:
             if getattr(capabilities, "supports_vision", None) is not True:
                 raise LLMError("o runtime LLM não anuncia suporte a análise visual")
         copied_history = self._copy_history(history)
-        schemas = self._schemas_for_requirement(registry, requirement)
+        turn = _TurnState(text, domains=set(route.domains) if route is not None else None)
+        self._last_available_domains = registry.domains(self._available_tool_names(registry))
+        schemas = self._schemas_for_requirement(
+            registry, requirement, turn.domains, include_domain_request=route is not None
+        )
         messages = self._prepare_messages(text, registry, copied_history, requirement, image_data_url, schemas)
         current_message_index = len(messages) - 1
         compactor = ContextCompactor(self.config.context_size, self.config.max_tokens, self.context_config)
-        turn = _TurnState(text)
         self._active_turn = turn
         if self.vision_permission is not None:
             self.vision_permission.begin_turn(text)
@@ -190,6 +243,10 @@ class LLMClient:
             for tool_round in range(4):
                 turn.tool_round = tool_round + 1
                 request_count += 1
+                schemas = self._schemas_for_requirement(
+                    registry, requirement, turn.domains, include_domain_request=route is not None
+                )
+                self._last_tools_exposed_count = len(schemas)
                 try:
                     prepared = compactor.prepare(messages, schemas, current_message_index)
                 except ContextCompactionError:
@@ -198,6 +255,7 @@ class LLMClient:
                         raise
                     log.debug("using broad tool schema fallback under context pressure")
                     schemas = fallback
+                    self._last_tools_exposed_count = len(schemas)
                     prepared = compactor.prepare(messages, schemas, current_message_index)
                 messages = prepared.messages
                 schemas = prepared.schemas
@@ -265,6 +323,7 @@ class LLMClient:
                             arguments,
                             turn,
                         )
+                        self._last_domain_expansions = turn.domain_expansions
                     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                         result = {"error": str(exc)}
                     serialized_result = self._tool_result_content(result)
@@ -296,11 +355,13 @@ class LLMClient:
         arguments: dict[str, Any],
         turn: _TurnState,
     ) -> Any:
+        if name == "request_tool_domain":
+            return self._request_tool_domain(registry, arguments, turn)
         try:
             tool = registry.get(name)
         except KeyError:
             return {"status": "error", "reason": "unknown_tool"}
-        if name not in self._available_tool_names(registry):
+        if name not in self._exposed_tool_names(registry, turn.domains):
             return {"status": "blocked", "reason": "tool_unavailable"}
         fingerprint = self._tool_fingerprint(name, arguments)
         previous_epoch = turn.fingerprints.get(fingerprint)
@@ -337,6 +398,24 @@ class LLMClient:
         if tool.mutates_state and self._result_changed(result):
             turn.state_epoch += 1
         return result
+
+    def _request_tool_domain(
+        self, registry: ToolRegistry, arguments: dict[str, Any], turn: _TurnState
+    ) -> dict[str, Any]:
+        domain = arguments.get("domain")
+        if not isinstance(domain, str) or domain not in registry.valid_domains:
+            return {"status": "rejected", "reason": "invalid_domain"}
+        if turn.domains is None:
+            return {"status": "ignored", "reason": "all_domains_already_available", "domain": domain}
+        if domain in turn.domains:
+            return {"status": "ignored", "reason": "domain_already_enabled", "domain": domain}
+        if turn.domain_expansions >= MAX_DOMAIN_EXPANSIONS or len(turn.domains) >= MAX_DOMAINS_PER_TURN:
+            return {"status": "rejected", "reason": "domain_expansion_limit", "domain": domain}
+        turn.domains.add(domain)
+        turn.requested_domains.add(domain)
+        turn.domain_expansions += 1
+        available = len(registry.names_for_domains((domain,), self._available_tool_names(registry)))
+        return {"status": "accepted", "domain": domain, "tools_available": available}
 
     @staticmethod
     def _tool_fingerprint(name: str, arguments: dict[str, Any]) -> str:
@@ -377,37 +456,31 @@ class LLMClient:
                 names = tuple(name for name in names if name != "observe_screen")
         return names
 
-    def _schema_budget_fallback(
-        self, registry: ToolRegistry, schemas: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Keep several fixed capability groups when the complete catalog cannot fit."""
-        groups: dict[str, list[str]] = {
-            "desktop": [],
-            "audio": [],
-            "media": [],
-            "applications": [],
-            "vision": [],
-        }
+    def _exposed_tool_names(self, registry: ToolRegistry, domains: set[str] | None) -> tuple[str, ...]:
+        names = self._available_tool_names(registry)
+        return names if domains is None else registry.names_for_domains(domains, names)
+
+    def _schema_budget_fallback(self, registry: ToolRegistry, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep a few tools per declared domain under context pressure."""
+        groups: dict[str, list[str]] = {}
+        has_domain_request = False
         for schema in schemas:
             function = schema.get("function", {})
             name = function.get("name") if isinstance(function, dict) else None
             if not isinstance(name, str):
                 continue
-            if name == "observe_screen":
-                group = "vision"
-            elif any(term in name for term in ("audio", "volume", "mute")):
-                group = "audio"
-            elif "media" in name:
-                group = "media"
-            elif any(term in name for term in ("application", "open_url", "process")):
-                group = "applications"
-            else:
-                group = "desktop"
-            groups[group].append(name)
+            if name == "request_tool_domain":
+                has_domain_request = True
+                continue
+            groups.setdefault(registry.get(name).domain, []).append(name)
         selected = [name for names in groups.values() for name in names[:3]]
-        if len(selected) >= len(schemas):
+        real_schema_count = len(schemas) - int(has_domain_request)
+        if len(selected) >= real_schema_count:
             return schemas
-        return registry.schemas(selected)
+        reduced = registry.schemas(selected)
+        if has_domain_request:
+            reduced.append(_DOMAIN_REQUEST_SCHEMA)
+        return reduced
 
     def _system_prompt(self) -> str:
         control = "/think" if self.config.thinking else "/no_think"
@@ -531,10 +604,17 @@ class LLMClient:
         return payload
 
     def _schemas_for_requirement(
-        self, registry: ToolRegistry, requirement: ToolRequirement | None
+        self,
+        registry: ToolRegistry,
+        requirement: ToolRequirement | None,
+        domains: set[str] | None = None,
+        include_domain_request: bool = False,
     ) -> list[dict[str, Any]]:
-        # Availability is structural. Intent selection stays with the model via tool_choice=auto.
-        return registry.schemas(self._available_tool_names(registry))
+        # Domain selection is a context budget, not a tool decision. The model still uses tool_choice=auto.
+        schemas = registry.schemas(self._exposed_tool_names(registry, domains))
+        if include_domain_request and domains and len(domains) < MAX_DOMAINS_PER_TURN:
+            schemas.append(_DOMAIN_REQUEST_SCHEMA)
+        return schemas
 
     @staticmethod
     def _raw_tool_name(content: str, registry: ToolRegistry) -> str | None:
@@ -552,6 +632,8 @@ class LLMClient:
         if isinstance(parsed, dict):
             name = parsed.get("name")
             if isinstance(name, str) and "arguments" in parsed:
+                if name == "request_tool_domain":
+                    return name
                 try:
                     registry.get(name)
                 except KeyError:
@@ -563,6 +645,8 @@ class LLMClient:
                     if isinstance(call, dict) and isinstance(call.get("function"), dict):
                         name = call["function"].get("name")
                         if isinstance(name, str):
+                            if name == "request_tool_domain":
+                                return name
                             try:
                                 registry.get(name)
                             except KeyError:
@@ -571,6 +655,8 @@ class LLMClient:
         match = re.search(r'"name"\s*:\s*"([^"\\]+)"', candidate)
         if match:
             name = match.group(1)
+            if name == "request_tool_domain":
+                return name
             try:
                 registry.get(name)
             except KeyError:
@@ -626,29 +712,45 @@ class LLMClient:
             **self._context_metric_values(),
         )
         log.debug(
-            "llama-server chat complete requests=%s predicted_tokens=%s predicted_tps=%s",
+            "llama-server chat complete requests=%s predicted_tokens=%s predicted_tps=%s domains=%s tools=%s "
+            "expansions=%s router_failure=%s",
             request_count,
             predicted_tokens,
             predicted_tps,
+            self._last_metrics.domains_selected,
+            self._last_metrics.tools_exposed_count,
+            self._last_metrics.domain_expansions,
+            self._last_metrics.router_failure,
         )
 
     def _context_metric_values(self) -> dict[str, Any]:
         metrics = self._last_context_metrics
-        if metrics is None:
-            return {}
-        return {
-            "context_limit": metrics.context_limit,
-            "soft_limit": metrics.soft_limit,
-            "estimated_before": metrics.estimated_before,
-            "estimated_after": metrics.estimated_after,
-            "history_tokens": metrics.history_tokens,
-            "tool_schema_tokens": metrics.tool_schema_tokens,
-            "tool_result_tokens": metrics.tool_result_tokens,
-            "image_tokens": metrics.image_tokens,
-            "compacted": metrics.compacted,
-            "history_turns_removed": metrics.history_turns_removed,
-            "tool_results_compacted": metrics.tool_results_compacted,
+        values = {
+            "domains_selected": self._last_domain_route.domains if self._last_domain_route else (),
+            "domains_available": self._last_available_domains,
+            "tools_exposed_count": self._last_tools_exposed_count,
+            "estimated_tool_schema_tokens": metrics.tool_schema_tokens if metrics else None,
+            "domain_expansions": self._last_domain_expansions,
+            "router_latency_ms": self._last_domain_route.latency_ms if self._last_domain_route else None,
+            "router_failure": self._last_domain_route.failed if self._last_domain_route else False,
         }
+        if metrics is not None:
+            values.update(
+                {
+                    "context_limit": metrics.context_limit,
+                    "soft_limit": metrics.soft_limit,
+                    "estimated_before": metrics.estimated_before,
+                    "estimated_after": metrics.estimated_after,
+                    "history_tokens": metrics.history_tokens,
+                    "tool_schema_tokens": metrics.tool_schema_tokens,
+                    "tool_result_tokens": metrics.tool_result_tokens,
+                    "image_tokens": metrics.image_tokens,
+                    "compacted": metrics.compacted,
+                    "history_turns_removed": metrics.history_turns_removed,
+                    "tool_results_compacted": metrics.tool_results_compacted,
+                }
+            )
+        return values
 
     @staticmethod
     def _callback(callback, *args) -> None:
@@ -660,3 +762,5 @@ class LLMClient:
 
     def close(self) -> None:
         self.client.close()
+        if self.domain_router is not None:
+            self.domain_router.close()

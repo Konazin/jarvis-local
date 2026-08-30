@@ -9,10 +9,16 @@ Assistente desktop local e leve para Linux, em desenvolvimento inicial.
 ```text
 texto do usuário
       ↓
-Yuki ── llama.cpp / Qwen ── loop agentivo (tool_choice=auto)
+DomainRouter ── 1–2 domínios ── llama.cpp / Qwen ── loop agentivo (tool_choice=auto)
    ├── Tool Registry / executor seguro
    └── Kokoro TTS → áudio
 ```
+
+O roteador reduz os schemas enviados ao modelo pequeno, mas não escolhe uma
+tool: o Qwen continua decidindo livremente entre as capabilities do domínio.
+Quando uma categoria adicional é necessária, `request_tool_domain` pode
+habilitá-la por poucas rodadas. Uma pergunta conceitual pode ser respondida
+sem tools.
 
 ## Stack
 
@@ -43,6 +49,9 @@ Com `thinking = false`, o cliente usa `/no_think` como fallback e também envia 
 Os aplicativos configurados em `[applications]` continuam sendo a fonte explícita. O catálogo também pode descobrir executáveis seguros no `PATH`, entradas `.desktop` em diretórios XDG e, quando instalado, aplicativos Flatpak. O LLM recebe apenas aliases, e abrir um aplicativo exige confirmação; comandos reais nunca são fornecidos pelo modelo nem passam por shell. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
 
 A Yuki também lista aplicativos configurados em execução e pode solicitar seu fechamento, sempre com confirmação. O fechamento compara nomes de processo exatos definidos em `process_names`; não há encerramento arbitrário por PID, shell ou comando externo.
+
+O domínio `files` oferece somente `list_files`, `find_files` e `get_file_info`,
+com limites locais e sem leitura de conteúdo ou mutações.
 
 O pacote desktop também oferece consulta da janela ativa no X11, volume/mute, controles de mídia e interfaces de rede. `wpctl`, `playerctl` e `xprop` são capacidades opcionais: quando ausentes, a tool retorna indisponibilidade estruturada. Wayland não é tratado como se fosse X11.
 
@@ -82,6 +91,16 @@ O backend de wake é opcional e configurado em `[wake]`, sem download automátic
 `vision.enabled = false` mantém a visão desligada por padrão. A capability `observe_screen` oferece `previous_window` (padrão), `active_window` e `full_screen`; o botão `Olhar` usa a janela anterior para não capturar a própria Yuki. A permissão explícita é apenas um gate: o modelo continua decidindo se deve observar. Capturas são PNG em memória, enviadas como observação multimodal ao mesmo llama-server quando `/props` anuncia `modalities.vision = true`; Wayland retorna indisponibilidade clara. `max_capture_dimension` limita o maior lado e retenção de debug é opcional, expira em no máximo 1800 segundos.
 
 Wake/VAD são leves e transitórios; Whisper e captura visual não ficam residentes. O llama-server e o Kokoro seguem sendo os componentes residentes já existentes. Não há benchmark de hardware embutido nesta etapa.
+
+### Plugins locais
+
+Arquivos `.py` em `plugins/` são descobertos em ordem determinística e
+convertidos em tools com metadata de domínio, risco e mutabilidade. Plugins
+quebrados, inválidos, desabilitados ou com colisão são isolados. Eles são
+trusted local code: importar o arquivo executa código de topo e não constitui
+sandbox. A execução não recebe objetos da UI, sessão ou cliente LLM e passa
+pelo mesmo `ToolExecutor` das capabilities internas. A proveniência da
+arquitetura está em [`docs/research/mark_li_architecture.md`](docs/research/mark_li_architecture.md).
 
 ### Contexto da sessão
 

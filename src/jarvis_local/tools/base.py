@@ -2,6 +2,22 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Callable
 
+VALID_TOOL_DOMAINS = frozenset(
+    {
+        "system",
+        "applications",
+        "desktop",
+        "files",
+        "web",
+        "browser",
+        "vision",
+        "media",
+        "memory",
+        "reminders",
+        "development",
+    }
+)
+
 
 class RiskLevel(StrEnum):
     SAFE = "SAFE"
@@ -28,6 +44,18 @@ class Tool:
     precheck: Callable[..., dict[str, Any] | None] | None = None
     confirmation_description: Callable[..., str] | None = None
     mutates_state: bool = False
+    domain: str = "system"
+    source: str = "core"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.domain, str) or self.domain not in VALID_TOOL_DOMAINS:
+            raise ValueError(f"domínio de tool inválido: {self.domain}")
+        if not isinstance(self.source, str) or not self.source.strip():
+            raise ValueError("source da tool não pode ser vazio")
+
+    @property
+    def risk(self) -> RiskLevel:
+        return self.risk_level
 
     def schema(self) -> dict[str, Any]:
         return {
