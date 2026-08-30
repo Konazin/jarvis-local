@@ -133,6 +133,8 @@ class WakeConfig:
     enabled: bool = False
     backend: str = "openwakeword"
     model: str = ""
+    model_path: str = ""
+    worker_python: str = ""
     threshold: float = 0.5
     cooldown_seconds: float = 2.0
     pre_roll_ms: int = 400

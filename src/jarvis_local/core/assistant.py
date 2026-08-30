@@ -5,6 +5,7 @@ from jarvis_local.llm.client import LLMClient
 from jarvis_local.tools.registry import ToolRegistry
 from jarvis_local.tts.normalizer import SpeechNormalizer
 
+from .events import ProactiveCheckEvent, SystemAlertEvent
 from .response import DisplaySanitizer, ResponseNaturalizer
 from .state import State, StateMachine
 
@@ -91,9 +92,7 @@ class Assistant:
                 response = self.llm.chat(text, self.tools, history=history)
             else:
                 response = self.llm.chat(text, self.tools, history=history, image=image)
-            answer = self.display_sanitizer.sanitize(
-                self.response_naturalizer.normalize(text, response)
-            )
+            answer = self.display_sanitizer.sanitize(self.response_naturalizer.normalize(text, response))
             if self.session is not None:
                 self.session.append_turn(text, answer)
             if self.tts is not None:
@@ -105,6 +104,29 @@ class Assistant:
         except Exception:
             self._fail()
             raise
+
+    def handle_internal_event(self, event) -> str | None:
+        if isinstance(event, SystemAlertEvent):
+            prompt = (
+                f"Uso de {event.metric} está em {event.value:g}, acima do limite configurado de "
+                f"{event.threshold:g}. Informe o usuário brevemente em português; não use ferramentas "
+                "nem sugira ações alarmistas."
+            )
+        elif isinstance(event, ProactiveCheckEvent):
+            prompt = (
+                f"É {event.period_of_day}. Verifique se há algo breve e realmente útil para dizer ao usuário "
+                f"por causa de {event.reason}. Se não houver, responda exatamente NO_OUTPUT. Não use ferramentas."
+            )
+        else:
+            raise TypeError("evento interno desconhecido")
+        try:
+            answer = self.llm.internal_chat(prompt)
+        except Exception:
+            log.exception("internal event failed: %s", type(event).__name__)
+            return None
+        if not answer or answer.strip().upper() == "NO_OUTPUT":
+            return None
+        return self.display_sanitizer.sanitize(answer)
 
     def clear_conversation(self) -> None:
         if self.session is not None:

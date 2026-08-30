@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from ..config import WakeConfig
@@ -23,7 +24,8 @@ class WakeWordDetector:
     ) -> None:
         if config.backend != "openwakeword":
             raise WakeWordError(f"backend de wake word não suportado: {config.backend}")
-        if not config.model.strip():
+        model_name = config.model_path.strip() or config.model.strip()
+        if not model_name:
             raise WakeWordError("modelo de wake word não configurado")
         if model_factory is None:
             try:
@@ -32,7 +34,15 @@ class WakeWordDetector:
                 raise WakeWordError("openWakeWord não está instalado") from exc
 
             def model_factory(model: str) -> Any:
-                return Model(wakeword_models=[model], inference_framework="onnx")
+                model_path = model
+                if not Path(model).is_file():
+                    import openwakeword
+
+                    known = openwakeword.MODELS.get(model, {})
+                    model_path = known.get("model_path", "")
+                if not model_path or not Path(model_path).is_file():
+                    raise WakeWordError("modelo de wake word ausente; nenhum download automático foi feito")
+                return Model(wakeword_models=[model_path], inference_framework="onnx")
 
         if array_factory is None:
             try:
@@ -43,10 +53,25 @@ class WakeWordDetector:
             def array_factory(pcm: bytes) -> Any:
                 return np.frombuffer(pcm, dtype=np.int16)
 
-        self._model = model_factory(config.model)
+        self._model = model_factory(model_name)
         self._array_factory = array_factory
+        self._suspended = False
+
+    def start(self) -> None:
+        self._suspended = False
+
+    def suspend(self) -> None:
+        self._suspended = True
+
+    def resume(self) -> None:
+        self._suspended = False
+
+    def close(self) -> None:
+        self._suspended = True
 
     def predict(self, pcm: bytes) -> float:
+        if self._suspended:
+            return 0.0
         predictions = self._model.predict(self._array_factory(pcm))
         if not isinstance(predictions, dict) or not predictions:
             raise WakeWordError("openWakeWord retornou uma previsão inválida")

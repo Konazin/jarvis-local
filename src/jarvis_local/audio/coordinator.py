@@ -93,6 +93,8 @@ class AudioStreamWorker(QObject):
     def run(self) -> None:
         try:
             self._detector = self.detector_factory() if self.detector_factory is not None else None
+            if self._detector is not None:
+                getattr(self._detector, "start", lambda: None)()
             self._stream = self.stream_factory(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
@@ -107,6 +109,7 @@ class AudioStreamWorker(QObject):
                 self.failed.emit(str(exc))
         finally:
             stream = self._stream
+            detector = self._detector
             self._stream = None
             self._detector = None
             self._utterance = None
@@ -116,6 +119,11 @@ class AudioStreamWorker(QObject):
                         getattr(stream, method_name)()
                     except Exception:
                         pass
+            if detector is not None:
+                try:
+                    detector.close()
+                except Exception:
+                    pass
             self.finished.emit()
 
     def _callback(self, indata: Any, _frames: int, _time_info: Any, _status: Any) -> None:

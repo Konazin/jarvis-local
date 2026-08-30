@@ -192,6 +192,27 @@ class LLMClient:
         """Metrics for the most recent chat, including useful partial failures."""
         return self._last_metrics
 
+    def internal_chat(self, prompt: str) -> str:
+        """Render an internal event without routing or exposing tools."""
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise LLMError("contexto interno inválido")
+        response = self.client.post(
+            f"{self.config.base_url.rstrip('/')}/chat/completions",
+            json={
+                "model": self.config.model,
+                "messages": [{"role": "system", "content": self._system_prompt()}, {"role": "user", "content": prompt}],
+                "max_tokens": self.config.max_tokens,
+                "tools": [],
+                "tool_choice": "none",
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"].get("content")
+        if not isinstance(content, str):
+            raise LLMError("resposta interna sem conteúdo")
+        return content.strip()
+
     def chat(
         self,
         text: str,
