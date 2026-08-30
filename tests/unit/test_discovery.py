@@ -73,3 +73,39 @@ def test_explicit_definition_wins_discovered_alias(tmp_path):
     catalog = discover_applications((configured,), path=str(tmp_path), desktop_dirs=())
 
     assert catalog.resolve("discord").display_name == "Configured"
+
+
+def test_missing_explicit_command_allows_xdg_replacement(tmp_path, monkeypatch):
+    binary = executable(tmp_path / "discord-bin")
+    entry_dir = tmp_path / "applications"
+    entry_dir.mkdir()
+    (entry_dir / "discord.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Discord\nExec=discord-bin\n"
+    )
+    monkeypatch.setattr(
+        "jarvis_local.apps.discovery.shutil.which",
+        lambda name: str(binary) if name in {"discord-bin", str(binary)} else None,
+    )
+    configured = ApplicationDefinition("discord", "Configured", ("discord",), source="explicit")
+
+    catalog = discover_applications((configured,), desktop_dirs=(entry_dir,), path="")
+
+    assert catalog.resolve("discord").source == "desktop"
+    assert catalog.resolve("discord").command == (str(binary),)
+
+
+def test_missing_explicit_command_allows_flatpak_replacement(monkeypatch):
+    monkeypatch.setattr(
+        "jarvis_local.apps.discovery.shutil.which",
+        lambda name: "/usr/bin/flatpak" if name == "flatpak" else None,
+    )
+
+    def runner(command, **_kwargs):
+        return SimpleNamespace(returncode=0, stdout="com.discordapp.Discord\tDiscord\n", stderr="")
+
+    configured = ApplicationDefinition("discord", "Configured", ("discord",), source="explicit")
+    catalog = discover_applications(
+        (configured,), path="", desktop_dirs=(), include_flatpak=True, runner=runner
+    )
+
+    assert catalog.resolve("discord").source == "flatpak"

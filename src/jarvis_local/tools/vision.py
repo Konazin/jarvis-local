@@ -22,6 +22,7 @@ class VisionAccess:
         self.last_capture = None
 
     def begin_turn(self, text: str) -> None:
+        self.last_capture = None
         if self.policy == "session":
             self._turn_authorized = self.session_authorized
         elif self.policy == "explicit":
@@ -31,6 +32,7 @@ class VisionAccess:
 
     def end_turn(self) -> None:
         self._turn_authorized = False
+        self.last_capture = None
 
     @property
     def allowed(self) -> bool:

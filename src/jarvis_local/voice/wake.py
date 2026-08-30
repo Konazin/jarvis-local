@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -42,7 +43,9 @@ class WakeWordDetector:
                     model_path = known.get("model_path", "")
                 if not model_path or not Path(model_path).is_file():
                     raise WakeWordError("modelo de wake word ausente; nenhum download automático foi feito")
-                return Model(wakeword_models=[model_path], inference_framework="onnx")
+                parameters = inspect.signature(Model).parameters
+                model_argument = "wakeword_model_paths" if "wakeword_model_paths" in parameters else "wakeword_models"
+                return Model(**{model_argument: [model_path], "inference_framework": "onnx"})
 
         if array_factory is None:
             try:

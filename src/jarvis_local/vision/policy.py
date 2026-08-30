@@ -8,6 +8,7 @@ import re
 class VisualIntentPolicy:
     _PATTERNS = (
         r"\bolh[ae]\s+isso\b",
+        r"\bolh[ae]\s+(?:minha|essa|a)\s+tela\b",
         r"\bo\s+que\s+voc[êe]\s+v[êe]\b",
         r"\bo\s+que\s+acha\s+dessa\s+cor\b",
         r"\banalis[ae]\s+(?:essa|a)\s+(?:tela|janela)\b",

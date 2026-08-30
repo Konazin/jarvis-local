@@ -41,13 +41,14 @@ def test_detector_rejects_unavailable_configuration(config):
 def test_detector_uses_installed_openwakeword_models_mapping(monkeypatch, tmp_path):
     model_path = tmp_path / "hey_jarvis.onnx"
     model_path.touch()
+    received = {}
     package = ModuleType("openwakeword")
     package.models = {"hey_jarvis": {"model_path": str(model_path)}}
     model_module = ModuleType("openwakeword.model")
 
     class Model:
-        def __init__(self, **_kwargs):
-            pass
+        def __init__(self, **kwargs):
+            received.update(kwargs)
 
         def predict(self, _frame):
             return {"hey_jarvis": 0.9}
@@ -61,3 +62,5 @@ def test_detector_uses_installed_openwakeword_models_mapping(monkeypatch, tmp_pa
 
     assert detector.predict(b"\x00\x00") == 0.9
     assert not hasattr(package, "MODELS")
+    assert received["wakeword_models"] == [str(model_path)]
+    assert "AudioFeatures" not in received

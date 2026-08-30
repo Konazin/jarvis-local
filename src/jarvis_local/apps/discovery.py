@@ -71,21 +71,33 @@ def discover_applications(
 ) -> ApplicationCatalog:
     """Merge configured apps with safe entries from PATH, XDG and optionally Flatpak."""
     definitions = list(explicit)
-    known_aliases = {alias for item in definitions for alias in (item.alias, *item.aliases)}
-    for definition in _desktop_definitions(desktop_dirs, environ):
-        if not known_aliases.intersection((definition.alias, *definition.aliases)):
-            definitions.append(definition)
-            known_aliases.update((definition.alias, *definition.aliases))
-    for definition in _path_definitions(path if path is not None else (environ or os.environ).get("PATH", "")):
-        if not known_aliases.intersection((definition.alias, *definition.aliases)):
-            definitions.append(definition)
-            known_aliases.update((definition.alias, *definition.aliases))
-    if include_flatpak:
-        for definition in _flatpak_definitions(runner):
-            if not known_aliases.intersection((definition.alias, *definition.aliases)):
+    def merge(discovered: Iterable[ApplicationDefinition]) -> None:
+        for definition in discovered:
+            aliases = {definition.alias, *definition.aliases}
+            overlaps = [
+                index
+                for index, item in enumerate(definitions)
+                if aliases.intersection((item.alias, *item.aliases))
+            ]
+            if not overlaps:
                 definitions.append(definition)
-                known_aliases.update((definition.alias, *definition.aliases))
+            elif all(not _definition_available(definitions[index]) for index in overlaps):
+                definitions[overlaps[0]] = definition
+                for index in reversed(overlaps[1:]):
+                    definitions.pop(index)
+
+    merge(_desktop_definitions(desktop_dirs, environ))
+    merge(_path_definitions(path if path is not None else (environ or os.environ).get("PATH", "")))
+    if include_flatpak:
+        merge(_flatpak_definitions(runner))
     return ApplicationCatalog(definitions)
+
+
+def _definition_available(definition: ApplicationDefinition) -> bool:
+    executable = Path(definition.command[0])
+    return executable.is_file() and os.access(executable, os.X_OK) if executable.is_absolute() else shutil.which(
+        definition.command[0]
+    ) is not None
 
 
 def _desktop_directories(desktop_dirs: Iterable[Path] | None, environ: Mapping[str, str] | None) -> tuple[Path, ...]:

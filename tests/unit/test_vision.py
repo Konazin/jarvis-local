@@ -38,6 +38,7 @@ def test_visual_intent_policy_does_not_capture_normal_questions():
     policy = VisualIntentPolicy()
 
     assert policy.is_visual_intent("O que você vê nessa janela?")
+    assert policy.is_visual_intent("Olhe minha tela.")
     assert policy.is_visual_intent("analisa essa tela")
     assert not policy.is_visual_intent("Quanto de RAM estou usando?")
 
@@ -151,6 +152,16 @@ def test_observe_screen_is_permission_gated_and_returns_multimodal_observation()
     assert result.image is not None
     assert service.targets == [("previous_window", 1920)]
     access.end_turn()
+    assert access.last_capture is None
+
+
+def test_visual_capture_does_not_survive_into_a_new_turn():
+    access = VisionAccess(VisionConfig(enabled=True, capture_policy="session"), session_authorized=True)
+    access.last_capture = capture()
+
+    access.begin_turn("Quanto de RAM estou usando?")
+
+    assert access.last_capture is None
 
 
 def test_observe_screen_does_not_grant_permission_for_normal_question():
