@@ -18,6 +18,7 @@ _WINDOW_ID = re.compile(r"window id # (0x[0-9a-f]+)", re.IGNORECASE)
 _WINDOW_TITLE = re.compile(r'_NET_WM_NAME\([^)]*\)\s*=\s*"(.*)"')
 _WINDOW_CLASS = re.compile(r'WM_CLASS\([^)]*\)\s*=\s*"([^"]*)",\s*"([^"]*)"')
 _VOLUME = re.compile(r"Volume:\s+([0-9]+(?:\.[0-9]+)?)(?:\s+\[MUTED\])?", re.IGNORECASE)
+_PERCENT = re.compile(r"(\d+(?:\.\d+)?)%")
 
 
 class DesktopToolError(RuntimeError):
@@ -143,11 +144,45 @@ def get_network_status() -> dict[str, Any]:
     }
 
 
+def get_brightness(runner: Callable[..., Any] = subprocess.run) -> dict[str, Any]:
+    output = _run([_command_path("brightnessctl"), "-m"], runner=runner)
+    match = _PERCENT.search(output)
+    if match is None:
+        raise DesktopToolError("resposta do brightnessctl sem percentual válido")
+    return {"percent": float(match.group(1))}
+
+
+def set_brightness(percent: int | float, runner: Callable[..., Any] = subprocess.run) -> dict[str, Any]:
+    value = _validate_percent(percent)
+    _run([_command_path("brightnessctl"), "set", f"{value:g}%"], runner=runner)
+    return {"percent": value, "changed": True}
+
+
+def get_wifi_status(runner: Callable[..., Any] = subprocess.run) -> dict[str, Any]:
+    value = _run([_command_path("nmcli"), "radio", "wifi"], runner=runner).strip().casefold()
+    if value not in {"enabled", "disabled"}:
+        raise DesktopToolError("resposta do nmcli sem estado Wi-Fi válido")
+    return {"enabled": value == "enabled"}
+
+
+def set_wifi(enabled: bool, runner: Callable[..., Any] = subprocess.run) -> dict[str, Any]:
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled deve ser booleano")
+    _run([_command_path("nmcli"), "radio", "wifi", "on" if enabled else "off"], runner=runner)
+    return {"enabled": enabled, "changed": True}
+
+
 _NO_ARGUMENTS = {"type": "object", "properties": {}, "additionalProperties": False}
 _PERCENT_ARGUMENTS = {
     "type": "object",
     "properties": {"percent": {"type": "number", "minimum": 0, "maximum": 100}},
     "required": ["percent"],
+    "additionalProperties": False,
+}
+_BOOLEAN_ARGUMENTS = {
+    "type": "object",
+    "properties": {"enabled": {"type": "boolean"}},
+    "required": ["enabled"],
     "additionalProperties": False,
 }
 
@@ -225,5 +260,42 @@ DESKTOP_TOOLS = (
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_network_status,
+    ),
+    Tool(
+        "get_brightness",
+        "Consulta o brilho atual por brightnessctl, sem alterar o display.",
+        _NO_ARGUMENTS,
+        RiskLevel.SAFE,
+        get_brightness,
+        domain="system",
+    ),
+    Tool(
+        "set_brightness",
+        "Define o brilho entre 0 e 100 por cento após confirmação.",
+        _PERCENT_ARGUMENTS,
+        RiskLevel.CONFIRM,
+        set_brightness,
+        validate=lambda percent: _validate_percent(percent),
+        confirmation_description=lambda percent: f"A Yuki quer definir o brilho para {percent:g}%.",
+        mutates_state=True,
+        domain="system",
+    ),
+    Tool(
+        "get_wifi_status",
+        "Consulta se o rádio Wi-Fi está ligado via NetworkManager; não expõe redes nem credenciais.",
+        _NO_ARGUMENTS,
+        RiskLevel.SAFE,
+        get_wifi_status,
+        domain="system",
+    ),
+    Tool(
+        "set_wifi",
+        "Liga ou desliga apenas o rádio Wi-Fi após confirmação; não conecta redes nem recebe senhas.",
+        _BOOLEAN_ARGUMENTS,
+        RiskLevel.CONFIRM,
+        set_wifi,
+        confirmation_description=lambda enabled: f"A Yuki quer {'ligar' if enabled else 'desligar'} o Wi-Fi.",
+        mutates_state=True,
+        domain="system",
     ),
 )

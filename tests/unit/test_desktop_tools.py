@@ -110,10 +110,26 @@ def test_desktop_tool_risks_and_names():
         "media_next",
         "media_previous",
         "get_network_status",
+        "get_brightness",
+        "set_brightness",
+        "get_wifi_status",
+        "set_wifi",
     }
     assert tools["get_active_window"].risk_level is RiskLevel.SAFE
     assert tools["get_audio_status"].risk_level is RiskLevel.SAFE
     assert tools["get_network_status"].risk_level is RiskLevel.SAFE
     assert all(tools[name].risk_level is RiskLevel.CONFIRM for name in {
-        "set_volume", "toggle_mute", "media_play_pause", "media_next", "media_previous"
+        "set_volume", "toggle_mute", "media_play_pause", "media_next", "media_previous", "set_brightness", "set_wifi"
     })
+
+
+def test_brightness_and_wifi_use_fixed_commands(monkeypatch):
+    monkeypatch.setattr(desktop.shutil, "which", lambda name: f"/usr/bin/{name}")
+    calls, runner = fake_runner(["backlight,raw,500,1000,50%\n", "", "enabled\n", ""])
+
+    assert desktop.get_brightness(runner) == {"percent": 50.0}
+    assert desktop.set_brightness(25, runner) == {"percent": 25.0, "changed": True}
+    assert desktop.get_wifi_status(runner) == {"enabled": True}
+    assert desktop.set_wifi(False, runner) == {"enabled": False, "changed": True}
+    assert calls[1][0][-2:] == ["set", "25%"]
+    assert calls[3][0][-2:] == ["wifi", "off"]

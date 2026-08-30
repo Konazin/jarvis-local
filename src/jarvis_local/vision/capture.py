@@ -112,10 +112,14 @@ class ScreenCaptureService:
                 painter.drawPixmap(rect.x() - geometry.x(), rect.y() - geometry.y(), pixmap)
         finally:
             painter.end()
-        return self._capture_pixmap(canvas, CaptureTarget.FULL_SCREEN, max_dimension)
+        return self._capture_pixmap(
+            canvas, CaptureTarget.FULL_SCREEN, max_dimension, origin_x=geometry.x(), origin_y=geometry.y()
+        )
 
     @staticmethod
-    def _capture_pixmap(pixmap, target: CaptureTarget, max_dimension: int) -> ScreenCapture:
+    def _capture_pixmap(
+        pixmap, target: CaptureTarget, max_dimension: int, *, origin_x: int = 0, origin_y: int = 0
+    ) -> ScreenCapture:
         if pixmap.isNull():
             raise ScreenCaptureError("não foi possível capturar a tela")
         width, height = pixmap.width(), pixmap.height()
@@ -138,6 +142,10 @@ class ScreenCaptureService:
             height=pixmap.height(),
             target=target,
             captured_at=time.time(),
+            origin_x=origin_x,
+            origin_y=origin_y,
+            original_width=width,
+            original_height=height,
         )
 
 

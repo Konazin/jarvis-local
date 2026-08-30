@@ -15,6 +15,7 @@ from .llm.session import ConversationSession
 from .plugins import PluginLoader
 from .tools.applications import build_application_tools
 from .tools.desktop import DESKTOP_TOOLS
+from .tools.desktop_control import build_desktop_control_tools
 from .tools.executor import ToolExecutor
 from .tools.files import FILES_TOOLS
 from .tools.registry import ToolRegistry
@@ -33,8 +34,6 @@ def main() -> None:
     tools = ToolRegistry()
     for tool in SYSTEM_TOOLS:
         tools.register(tool)
-    for tool in DESKTOP_TOOLS:
-        tools.register(tool)
     catalog = discover_applications(
         (
             ApplicationDefinition(alias, application.name, application.command, application.process_names)
@@ -45,6 +44,10 @@ def main() -> None:
     for tool in build_application_tools(catalog):
         tools.register(tool)
     vision_access = VisionAccess(config.vision, session_authorized=config.vision.capture_policy == "session")
+    for tool in DESKTOP_TOOLS:
+        tools.register(tool)
+    for tool in build_desktop_control_tools(lambda: vision_access.last_capture, catalog):
+        tools.register(tool)
     for tool in build_vision_tools(config.vision, access=vision_access):
         tools.register(tool)
     for tool in FILES_TOOLS:

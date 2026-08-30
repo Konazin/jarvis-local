@@ -19,6 +19,7 @@ class VisionAccess:
         self.policy = config.capture_policy
         self.session_authorized = session_authorized
         self._turn_authorized = False
+        self.last_capture = None
 
     def begin_turn(self, text: str) -> None:
         if self.policy == "session":
@@ -52,8 +53,13 @@ def _observe_screen(
         capture = service.capture(target, max_dimension)
     except ScreenCaptureError as exc:
         return {"status": "error", "reason": str(exc)}
+    access.last_capture = capture
+    geometry = capture.geometry
     return ToolObservation(
-        f"OBSERVAÇÃO VISUAL parcial: alvo={capture.target.value}, tamanho={capture.width}x{capture.height}.",
+        "OBSERVAÇÃO VISUAL parcial: "
+        f"alvo={capture.target.value}, enviada={capture.width}x{capture.height}, "
+        f"original={geometry['original_width']}x{geometry['original_height']}, "
+        f"origem=({geometry['origin_x']},{geometry['origin_y']}).",
         capture,
     )
 
