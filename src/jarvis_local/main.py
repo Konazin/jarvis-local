@@ -8,6 +8,8 @@ from .apps.catalog import ApplicationDefinition
 from .apps.discovery import discover_applications
 from .config import load_config, resolve_config_path
 from .core.assistant import Assistant
+from .core.monitor import ProactiveGate, SystemMonitor
+from .core.runtime_events import RuntimeEventController
 from .llm.client import LLMClient
 from .llm.domain_router import DomainRouter
 from .llm.runtime import LLMRuntimeManager
@@ -96,9 +98,20 @@ def main() -> None:
         vision_config=config.vision,
         debug_config=config.debug,
     )
+    runtime_events = RuntimeEventController(
+        assistant,
+        SystemMonitor(config.monitor),
+        ProactiveGate(config.proactive),
+        busy=lambda: not window._assistant_is_idle(),
+        wake_listening=lambda: window.audio.state.value in {"WAKE_LISTENING", "POST_WAKE_RECORDING"},
+        parent=window,
+    )
+    runtime_events.response.connect(lambda answer: window.history.addItem(f"Yuki: {answer}"))
+    runtime_events.start()
 
     def quit_app() -> None:
         window.shutdown()
+        runtime_events.close()
         app.quit()
 
     tray = Tray(window, tts, quit_app)
