@@ -28,7 +28,8 @@ No código de produção foram reimplementados independentemente:
 - `DomainRouter` local, que retorna apenas categorias e mantém `tool_choice=auto`;
 - expansão limitada por `request_tool_domain`;
 - loader de plugins confiáveis usando o mesmo `ToolExecutor`;
-- capabilities read-only de arquivos e descoberta Linux já existente.
+- capabilities de arquivos com raízes configuradas e descoberta Linux já existente;
+- lembretes e memória SQLite explícita, controle X11 limitado e browser Playwright opcional.
 
 O launcher continua sem `shell=True`, privilegia catálogo explícito, PATH,
 XDG desktop entries e Flatpak configurado. A monitorização usa `psutil` e não
@@ -41,11 +42,11 @@ topo. O loader não é sandbox e não tenta criar uma falsa sandbox. Plugins nã
 recebem UI, `QApplication`, cliente LLM ou sessão; a execução passa pelo
 `ToolExecutor`, que continua aplicando SAFE/CONFIRM/DANGEROUS.
 
-X11 pode oferecer `xprop` e captura Qt quando disponíveis. Wayland não é
+X11 pode oferecer `xprop` e captura Qt quando disponíveis. A captura fornece tamanho enviado, geometria original e
+origem; ações de ponteiro convertem coordenadas normalizadas somente após observação visual. Wayland não é
 tratado como equivalente: ScreenCast/RemoteDesktop via portal ou APIs KDE/KWin
 ficam para uma etapa posterior. Dashboard remoto, browser completo, memória
-persistente nova, proactive/background monitoring, dev agent, execução de
-código, shell arbitrário e mutações arbitrárias continuam fora desta rodada.
+persistente automática, dev agent, execução de código, shell arbitrário e mutações arbitrárias continuam fora desta rodada.
 
 > The Mark-LI project was used as an architectural reference. Production
 > implementation in jarvis-local is independently implemented. No Mark-LI

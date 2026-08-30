@@ -93,6 +93,34 @@ initial_prompt = "Yuki é uma assistente de computador. Termos comuns: memória 
 enabled = true
 disabled = []
 
+[files]
+# Somente estas raízes podem ser lidas ou modificadas pelas tools de arquivos.
+allowed_roots = ["~/Desktop", "~/Documents", "~/Downloads"]
+
+[reminders]
+database_path = "~/.local/share/jarvis-local/reminders.sqlite3"
+use_systemd = true
+
+[memory]
+database_path = "~/.local/share/jarvis-local/memory.sqlite3"
+
+[monitor]
+enabled = false
+interval_seconds = 30.0
+cpu_percent = 90.0
+cpu_streak = 3
+cooldown_seconds = 300.0
+
+[proactive]
+enabled = false
+idle_seconds = 300.0
+cooldown_seconds = 900.0
+
+[browser]
+# Playwright é opcional; o perfil é exclusivo da Yuki, nunca o perfil pessoal.
+enabled = false
+profile_path = "~/.local/share/jarvis-local/browser-profile"
+
 # Exemplos: altere ou remova conforme os aplicativos instalados.
 [applications.firefox]
 name = "Firefox"

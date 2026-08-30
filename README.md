@@ -92,7 +92,13 @@ O backend de wake é opcional e configurado em `[wake]`, sem download automátic
 
 Wake/VAD são leves e transitórios; Whisper e captura visual não ficam residentes. O llama-server e o Kokoro seguem sendo os componentes residentes já existentes. Não há benchmark de hardware embutido nesta etapa.
 
-### Plugins locais
+### Plugins locais e automação
+
+Tools são organizadas por domínio e passam pelo executor central: observações são SAFE, alterações exigem confirmação
+e ações perigosas são bloqueadas. O controle visual é X11-only, usa coordenadas normalizadas da última captura e não
+aceita shell, PID, seletor ou atalho arbitrário. Arquivos respeitam `[files]`, sem sobrescrita e com lixeira preferida.
+Lembretes e memórias usam SQLite local; memória só é consultada por tool explícita. O browser é opcional, usa
+Playwright com perfil isolado e IDs efêmeros de elementos. `[monitor]`, `[proactive]` e `[browser]` iniciam desligados.
 
 Arquivos `.py` em `plugins/` são descobertos em ordem determinística e
 convertidos em tools com metadata de domínio, risco e mutabilidade. Plugins

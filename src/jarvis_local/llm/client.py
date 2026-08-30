@@ -263,9 +263,7 @@ class LLMClient:
                 self._last_context_metrics = prepared.metrics
                 response = self.client.post(
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
-                    json=self._request_payload(
-                        messages, registry, requirement, schemas=schemas
-                    ),
+                    json=self._request_payload(messages, registry, requirement, schemas=schemas),
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -334,6 +332,31 @@ class LLMClient:
                             "content": serialized_result,
                         }
                     )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": "O orçamento de tools acabou. Responda agora com base apenas nas observações já "
+                    "obtidas; não tente novas ações nem invente sucesso.",
+                }
+            )
+            current_message_index = len(messages) - 1
+            prepared = compactor.prepare(messages, [], current_message_index)
+            request_count += 1
+            response = self.client.post(
+                f"{self.config.base_url.rstrip('/')}/chat/completions",
+                json={
+                    **self._request_payload(prepared.messages, registry, requirement, schemas=[]),
+                    "tool_choice": "none",
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+            self._accumulate_metrics(payload, usage_totals, timing_totals)
+            content = payload["choices"][0]["message"].get("content")
+            if not isinstance(content, str):
+                raise LLMError("resposta final do llama-server sem conteúdo")
+            self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
+            return content.strip()
         except (LLMError, ContextCompactionError, httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
             if isinstance(exc, LLMError):
@@ -345,8 +368,6 @@ class LLMClient:
             if self.vision_permission is not None:
                 self.vision_permission.end_turn()
             self._active_turn = None
-        self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
-        raise LLMError("limite de chamadas de tools excedido")
 
     def _execute_tool(
         self,
@@ -419,9 +440,7 @@ class LLMClient:
 
     @staticmethod
     def _tool_fingerprint(name: str, arguments: dict[str, Any]) -> str:
-        canonical = json.dumps(
-            arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
-        )
+        canonical = json.dumps(arguments, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return f"{name}:{canonical}"
 
     @staticmethod
