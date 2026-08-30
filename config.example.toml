@@ -60,7 +60,7 @@ max_recording_seconds = 30.0
 [wake]
 enabled = false
 backend = "openwakeword"
-model = "hey jarvis"
+model = "hey_jarvis"
 model_path = ""
 worker_python = ""
 threshold = 0.5
