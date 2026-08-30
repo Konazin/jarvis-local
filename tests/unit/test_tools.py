@@ -1,5 +1,6 @@
 import pytest
 
+from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 from jarvis_local.tools.system import SYSTEM_STATUS_TOOL
@@ -22,6 +23,17 @@ def test_duplicate_tool_is_rejected() -> None:
     registry.register(SYSTEM_STATUS_TOOL)
     with pytest.raises(ValueError):
         registry.register(SYSTEM_STATUS_TOOL)
+
+
+def test_registry_tracks_structural_availability_without_using_domain() -> None:
+    registry = ToolRegistry()
+    registry.register(SYSTEM_STATUS_TOOL)
+    registry.register(
+        Tool("unavailable", "backend ausente", {"type": "object"}, RiskLevel.SAFE, lambda: {}), available=False
+    )
+
+    assert registry.names() == ("get_system_status", "unavailable")
+    assert registry.available_names() == ("get_system_status",)
 
 
 def test_system_status_remains_safe_without_confirmation() -> None:

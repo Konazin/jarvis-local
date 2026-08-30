@@ -39,7 +39,8 @@ class ToolAvailabilityPolicy:
         return ToolRequirement(False)
 
     def available(self, registry) -> tuple[str, ...]:
-        return tuple(name for name in registry.names() if name not in self.disabled_tools)
+        names = registry.available_names() if hasattr(registry, "available_names") else registry.names()
+        return tuple(name for name in names if name not in self.disabled_tools)
 
 
 # Compatibility alias for callers that imported the old name. It is no longer a semantic router.

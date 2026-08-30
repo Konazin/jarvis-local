@@ -1,106 +1,42 @@
 import json
-from dataclasses import replace
-from types import SimpleNamespace
 
 import httpx
-import pytest
 
 from jarvis_local.config import load_config
-from jarvis_local.llm.client import MAX_DOMAIN_EXPANSIONS, LLMClient
-from jarvis_local.llm.domain_router import DomainRouter
+from jarvis_local.llm.client import LLMClient
 from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.registry import ToolRegistry
 
 
-def test_empty_live_route_uses_local_capability_fallback() -> None:
-    transport = httpx.MockTransport(
-        lambda _request: httpx.Response(
-            200, json={"choices": [{"message": {"content": '{"domains":[],"confidence":1}'}}]}
-        )
-    )
-    router = DomainRouter(load_config().llm, httpx.Client(transport=transport))
-
-    route = router.route("Quanto de RAM estou usando?")
-
-    assert route.failed
-    assert {"system", "applications", "media", "vision"} <= set(route.domains)
-
-
-def test_domain_router_accepts_categories_but_never_tool_names() -> None:
-    config = replace(load_config().llm)
-    router = DomainRouter(config, classifier=lambda _text: {"domains": ["system", "get_system_status"]})
-
-    route = router.route("Quanto de RAM estou usando?")
-
-    assert route.domains == ("system",)
-
-
-def test_domain_router_keeps_conceptual_questions_without_tools() -> None:
-    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": [], "confidence": 0.99})
-
-    assert router.route("O que é memória RAM?").domains == ()
-
-
-@pytest.mark.parametrize(
-    ("text", "domains"),
-    [
-        ("Quanto de RAM estou usando?", ("system",)),
-        ("Abra o Spotify.", ("applications",)),
-        ("O Spotify está travando e meu PC está lento.", ("applications", "system")),
-        ("O que você vê nessa tela?", ("vision",)),
-        ("Clique no botão de login.", ("vision", "desktop")),
-        ("Procure meu currículo em Downloads.", ("files",)),
-    ],
-)
-def test_domain_router_contract_for_reference_intents(text: str, domains: tuple[str, ...]) -> None:
-    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": list(domains)})
-
-    assert router.route(text).domains == domains
-
-
-def test_registry_filters_tools_by_valid_domain() -> None:
-    registry = ToolRegistry()
-    system = Tool("status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="system")
-    files = Tool("find", "find", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="files")
-    registry.register(system)
-    registry.register(files)
-
-    assert registry.get_tools_for_domains({"files"}) == (files,)
-    assert registry.names_for_domains({"system"}) == ("status",)
-
-    try:
-        registry.get_tools_for_domains({"unknown"})
-    except ValueError as exc:
-        assert "inválido" in str(exc)
-    else:
-        raise AssertionError("domínio inválido deveria ser rejeitado")
-
-
-def test_llm_exposes_selected_domain_and_keeps_auto_tool_choice() -> None:
+def test_domain_metadata_does_not_gate_schemas_or_call_router() -> None:
     requests = []
 
     def handler(request):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
+    class ExplodingRouter:
+        def route(self, _text):
+            raise AssertionError("DomainRouter não pode participar do hot path")
+
     registry = ToolRegistry()
-    registry.register(Tool("status", "status", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="system"))
-    registry.register(Tool("open", "open", {"type": "object"}, RiskLevel.CONFIRM, lambda: {}, domain="applications"))
-    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": ["applications"]})
-    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)), domain_router=router)
+    registry.register(Tool("status", "estado", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="system"))
+    registry.register(Tool("open", "abre", {"type": "object"}, RiskLevel.CONFIRM, lambda: {}, domain="applications"))
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        domain_router=ExplodingRouter(),
+    )
 
     assert llm.chat("Abra o Spotify", registry) == "ok"
-    assert [item["function"]["name"] for item in requests[0]["tools"]] == ["open", "request_tool_domain"]
+    assert [item["function"]["name"] for item in requests[0]["tools"]] == ["status", "open"]
     assert requests[0]["tool_choice"] == "auto"
-    assert llm.last_metrics.domains_selected == ("applications",)
+    assert "request_tool_domain" not in json.dumps(requests[0])
+    assert llm.last_metrics.domains_selected == ()
     assert llm.last_metrics.tools_exposed_count == 2
 
 
-@pytest.mark.parametrize(
-    ("domain", "tool_name"),
-    [("system", "get_system_status"), ("applications", "open_application"), ("media", "set_volume")],
-)
-def test_selected_domain_schema_reaches_http_request(domain: str, tool_name: str) -> None:
+def test_structural_availability_keeps_every_available_tool() -> None:
     requests = []
 
     def handler(request):
@@ -108,79 +44,36 @@ def test_selected_domain_schema_reaches_http_request(domain: str, tool_name: str
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
     registry = ToolRegistry()
-    registry.register(Tool(tool_name, tool_name, {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain=domain))
-    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": [domain]})
-    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)), domain_router=router)
+    registry.register(Tool("one", "one", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
+    registry.register(Tool("hidden", "hidden", {"type": "object"}, RiskLevel.SAFE, lambda: {}), available=False)
+    registry.register(Tool("two", "two", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="files"))
 
-    assert llm.chat("pedido", registry) == "ok"
-    assert tool_name in [item["function"]["name"] for item in requests[0]["tools"]]
+    assert LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler))).chat(
+        "pedido", registry
+    ) == "ok"
+    assert [item["function"]["name"] for item in requests[0]["tools"]] == ["one", "two"]
 
 
-def test_dynamic_domain_expansion_adds_tools_on_next_round() -> None:
+def test_domain_labels_do_not_stick_between_turns() -> None:
     requests = []
-    responses = iter(
-        [
-            httpx.Response(
-                200,
-                json={
-                    "choices": [
-                        {
-                            "message": {
-                                "tool_calls": [
-                                    {
-                                        "id": "domain",
-                                        "function": {
-                                            "name": "request_tool_domain",
-                                            "arguments": '{"domain":"vision"}',
-                                        },
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                },
-            ),
-            httpx.Response(
-                200,
-                json={
-                    "choices": [
-                        {
-                            "message": {
-                                "tool_calls": [
-                                    {"id": "vision", "function": {"name": "observe", "arguments": "{}"}}
-                                ]
-                            }
-                        }
-                    ]
-                },
-            ),
-            httpx.Response(200, json={"choices": [{"message": {"content": "feito"}}]}),
-        ]
-    )
 
     def handler(request):
         requests.append(json.loads(request.content))
-        return next(responses)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
     registry = ToolRegistry()
-    registry.register(Tool("open", "open", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="applications"))
-    registry.register(Tool("observe", "observe", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="vision"))
-    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": ["applications"]})
-    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)), domain_router=router)
+    registry.register(
+        Tool("observe_screen", "observa", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="vision")
+    )
+    registry.register(
+        Tool("create_directory", "cria pasta", {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain="files")
+    )
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
 
-    assert llm.chat("Abra e depois olhe", registry) == "feito"
-    assert "observe" not in [item["function"]["name"] for item in requests[0]["tools"]]
-    assert "observe" in [item["function"]["name"] for item in requests[1]["tools"]]
-    assert llm.last_metrics.domain_expansions == 1
-
-
-def test_dynamic_domain_expansion_rejects_invalid_duplicate_and_limit() -> None:
-    llm = LLMClient(load_config().llm)
-    registry = ToolRegistry()
-    turn = SimpleNamespace(domains={"applications"}, domain_expansions=0, requested_domains=set())
-
-    assert llm._request_tool_domain(registry, {"domain": "not-valid"}, turn)["reason"] == "invalid_domain"
-    assert llm._request_tool_domain(registry, {"domain": "vision"}, turn)["status"] == "accepted"
-    assert llm._request_tool_domain(registry, {"domain": "vision"}, turn)["reason"] == "domain_already_enabled"
-    turn.domain_expansions = MAX_DOMAIN_EXPANSIONS
-    assert llm._request_tool_domain(registry, {"domain": "files"}, turn)["reason"] == "domain_expansion_limit"
+    assert llm.chat("Olhe minha tela", registry) == "ok"
+    assert llm.chat("Crie uma pasta", registry) == "ok"
+    for request in requests:
+        assert {item["function"]["name"] for item in request["tools"]} == {
+            "observe_screen",
+            "create_directory",
+        }

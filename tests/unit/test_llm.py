@@ -34,7 +34,7 @@ def test_normal_response_sends_non_thinking_controls() -> None:
     payload = json.loads(requests[0].content)
     assert [message["role"] for message in payload["messages"]] == ["system", "user"]
     assert "/no_think" in payload["messages"][0]["content"]
-    assert "OBSERVAÇÃO VISUAL parcial" in payload["messages"][0]["content"]
+    assert "visão é parcial" in payload["messages"][0]["content"]
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert "reasoning_effort" not in payload
 
@@ -54,6 +54,58 @@ def test_reasoning_effort_is_sent_only_when_runtime_supports_it() -> None:
     )
     llm.chat("oi", ToolRegistry())
     assert json.loads(requests[0].content)["reasoning_effort"] == "none"
+
+
+def test_model_can_choose_ram_tool_while_other_tools_remain_available() -> None:
+    requests = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "ram",
+                                        "function": {"name": "get_system_status", "arguments": "{}"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "42%"}}]}),
+        ]
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    executed = []
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            "get_system_status",
+            "estado atual",
+            {"type": "object"},
+            RiskLevel.SAFE,
+            lambda: executed.append("ram") or {"memory_percent": 42},
+            domain="system",
+        )
+    )
+    registry.register(Tool("observe_screen", "observa", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert llm.chat("Quanto de RAM estou usando?", registry) == "42%"
+    assert executed == ["ram"]
+    assert {item["function"]["name"] for item in requests[0]["tools"]} == {
+        "get_system_status",
+        "observe_screen",
+    }
 
 
 def test_multimodal_chat_uses_local_data_url_and_keeps_text_messages():
@@ -160,6 +212,63 @@ def test_tool_observation_image_survives_next_llm_request():
     }
 
 
+def test_tool_observation_image_expires_after_the_immediately_next_request():
+    requests = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": "observe", "function": {"name": "observe", "arguments": "{}"}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": "next", "function": {"name": "next", "arguments": "{}"}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "feito"}}]}),
+        ]
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    capture = ScreenCapture(b"png", "image/png", 10, 10, CaptureTarget.FULL_SCREEN, 1.0)
+    registry = ToolRegistry()
+    registry.register(
+        Tool("observe", "observa", {"type": "object"}, RiskLevel.SAFE, lambda: ToolObservation("visual", capture))
+    )
+    registry.register(Tool("next", "continua", {"type": "object"}, RiskLevel.SAFE, lambda: {"changed": True}))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)))
+
+    assert llm.chat("Olhe e continue", registry) == "feito"
+    assert any(item.get("type") == "image_url" for item in requests[1]["messages"][-1]["content"])
+    assert all(
+        not isinstance(message.get("content"), list)
+        or all(item.get("type") != "image_url" for item in message["content"] if isinstance(item, dict))
+        for message in requests[2]["messages"]
+    )
+
+
 def test_textual_pseudotool_is_retried_without_reaching_ui():
     responses = iter(
         [
@@ -184,7 +293,7 @@ def test_degenerate_response_is_replaced_with_short_safe_error():
     assert llm.chat("abra", ToolRegistry()) == "Não consegui concluir essa solicitação com segurança."
 
 
-def test_schema_budget_fallback_keeps_system_status_and_process_tools():
+def test_schema_budget_does_not_prune_semantically_when_context_is_too_small():
     requests = []
 
     def handler(request):
@@ -206,10 +315,9 @@ def test_schema_budget_fallback_keeps_system_status_and_process_tools():
     router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": ["system"]})
     llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)), domain_router=router)
 
-    assert llm.chat("status", registry) == "ok"
-    names = [item["function"]["name"] for item in requests[0]["tools"]]
-    assert "get_system_status" in names
-    assert "get_top_memory_processes" in names
+    with pytest.raises(LLMError, match="contexto atual"):
+        llm.chat("status", registry)
+    assert requests == []
 
 
 def test_raw_registered_tool_call_is_retried_without_execution() -> None:
