@@ -106,7 +106,7 @@ def main() -> None:
         wake_listening=lambda: window.audio.state.value in {"WAKE_LISTENING", "POST_WAKE_RECORDING"},
         parent=window,
     )
-    runtime_events.response.connect(lambda answer: window.history.addItem(f"Yuki: {answer}"))
+    runtime_events.response.connect(window.internal_response)
     runtime_events.start()
 
     def quit_app() -> None:

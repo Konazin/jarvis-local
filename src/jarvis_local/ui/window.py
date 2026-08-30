@@ -234,6 +234,18 @@ class Window(QWidget):
     def done(self, answer: str) -> None:
         self.history.addItem(f"Yuki: {answer}")
 
+    def internal_response(self, answer: str) -> None:
+        if self._closing or not answer:
+            return
+        self.history.addItem(f"Yuki: {answer}")
+        if self.assistant.tts is not None and self._assistant_is_idle():
+            self._on_state_changed("SPEAKING")
+            self.assistant.tts.speak_async(
+                self.assistant.speech_normalizer.normalize(answer),
+                self.assistant._tts_done,
+                self.assistant._tts_error,
+            )
+
     def failed(self, error: str) -> None:
         self.history.addItem(f"Erro: {error}")
 
