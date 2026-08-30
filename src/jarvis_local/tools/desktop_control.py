@@ -6,6 +6,7 @@ import math
 import os
 import shutil
 import subprocess
+from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 from jarvis_local.apps.catalog import ApplicationCatalog
@@ -40,12 +41,57 @@ class DesktopCapabilityError(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class DesktopCapabilities:
+    session: str
+    desktop: str
+    xprop: bool
+    wmctrl: bool
+    xdotool: bool
+
+    @property
+    def capture(self) -> bool:
+        return self.session == "x11" and self.xprop
+
+    @property
+    def mouse(self) -> bool:
+        return self.session == "x11" and self.xdotool
+
+    @property
+    def keyboard(self) -> bool:
+        return self.mouse
+
+    @property
+    def focus(self) -> bool:
+        return self.mouse
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            **asdict(self),
+            "capture": self.capture,
+            "mouse": self.mouse,
+            "keyboard": self.keyboard,
+            "focus": self.focus,
+        }
+
+
 def desktop_environment(environ: dict[str, str] | None = None) -> dict[str, Any]:
     env = os.environ if environ is None else environ
     session = env.get("XDG_SESSION_TYPE", "").casefold()
     if not session:
         session = "x11" if env.get("DISPLAY") else "wayland" if env.get("WAYLAND_DISPLAY") else "unknown"
     return {"session_type": session, "desktop": env.get("XDG_CURRENT_DESKTOP", "unknown")}
+
+
+def desktop_capabilities(environ: dict[str, str] | None = None, finder=shutil.which) -> dict[str, Any]:
+    environment = desktop_environment(environ)
+    return DesktopCapabilities(
+        environment["session_type"],
+        environment["desktop"],
+        bool(finder("xprop")),
+        bool(finder("wmctrl")),
+        bool(finder("xdotool")),
+    ).summary()
 
 
 def _x11_available() -> None:
