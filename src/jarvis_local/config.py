@@ -291,6 +291,28 @@ class MemoryConfig:
 
 
 @dataclass(frozen=True)
+class MonitorConfig:
+    enabled: bool = False
+    interval_seconds: float = 30.0
+    cpu_percent: float = 90.0
+    cpu_streak: int = 3
+    cooldown_seconds: float = 300.0
+
+
+@dataclass(frozen=True)
+class ProactiveConfig:
+    enabled: bool = False
+    idle_seconds: float = 300.0
+    cooldown_seconds: float = 900.0
+
+
+@dataclass(frozen=True)
+class BrowserConfig:
+    enabled: bool = False
+    profile_path: str = "~/.local/share/jarvis-local/browser-profile"
+
+
+@dataclass(frozen=True)
 class ApplicationConfig:
     name: str
     command: tuple[str, ...]
@@ -328,6 +350,9 @@ class Config:
     files: FileConfig = FileConfig()
     reminders: ReminderConfig = ReminderConfig()
     memory: MemoryConfig = MemoryConfig()
+    monitor: MonitorConfig = MonitorConfig()
+    proactive: ProactiveConfig = ProactiveConfig()
+    browser: BrowserConfig = BrowserConfig()
 
 
 def resolve_project_path(path: str | Path) -> Path:
@@ -397,6 +422,9 @@ def load_config(path: str | Path | None = None) -> Config:
         FileConfig(**_section(data, "files")),
         ReminderConfig(**_section(data, "reminders")),
         MemoryConfig(**_section(data, "memory")),
+        MonitorConfig(**_section(data, "monitor")),
+        ProactiveConfig(**_section(data, "proactive")),
+        BrowserConfig(**_section(data, "browser")),
     )
     if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0 or config.llm.max_tokens < 1:
         raise ValueError("context_size, timeout_seconds e max_tokens devem ser positivos")
