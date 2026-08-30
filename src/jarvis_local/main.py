@@ -17,7 +17,8 @@ from .tools.applications import build_application_tools
 from .tools.desktop import DESKTOP_TOOLS
 from .tools.desktop_control import build_desktop_control_tools
 from .tools.executor import ToolExecutor
-from .tools.files import FILES_TOOLS
+from .tools.files import build_file_tools
+from .tools.persistence import build_memory_tools, build_reminder_tools
 from .tools.registry import ToolRegistry
 from .tools.system import SYSTEM_TOOLS
 from .tools.vision import VisionAccess, build_vision_tools
@@ -50,7 +51,12 @@ def main() -> None:
         tools.register(tool)
     for tool in build_vision_tools(config.vision, access=vision_access):
         tools.register(tool)
-    for tool in FILES_TOOLS:
+    for tool in build_file_tools(config.files):
+        tools.register(tool)
+    reminder_tools, reminders = build_reminder_tools(config.reminders)
+    for tool in reminder_tools:
+        tools.register(tool)
+    for tool in build_memory_tools(config.memory):
         tools.register(tool)
     if config.plugins.enabled:
         plugin_loader = PluginLoader(
@@ -102,6 +108,7 @@ def main() -> None:
     finally:
         window.shutdown()
         confirmation.close()
+        reminders.close()
         tts.close()
         runtime.close()
         llm.close()

@@ -181,12 +181,7 @@ class VADConfig:
             ("max_utterance_seconds", self.max_utterance_seconds),
             ("min_speech_seconds", self.min_speech_seconds),
         ):
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
-            ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"vad.{name} deve ser positivo")
         if (
             isinstance(self.energy_threshold, bool)
@@ -273,6 +268,29 @@ class PluginConfig:
 
 
 @dataclass(frozen=True)
+class FileConfig:
+    allowed_roots: tuple[str, ...] = ("~/Desktop", "~/Documents", "~/Downloads")
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allowed_roots, (tuple, list)) or not self.allowed_roots:
+            raise ValueError("files.allowed_roots deve ter ao menos um caminho")
+        if any(not isinstance(path, str) or not path.strip() for path in self.allowed_roots):
+            raise ValueError("files.allowed_roots deve conter caminhos não vazios")
+        object.__setattr__(self, "allowed_roots", tuple(dict.fromkeys(path.strip() for path in self.allowed_roots)))
+
+
+@dataclass(frozen=True)
+class ReminderConfig:
+    database_path: str = "~/.local/share/jarvis-local/reminders.sqlite3"
+    use_systemd: bool = True
+
+
+@dataclass(frozen=True)
+class MemoryConfig:
+    database_path: str = "~/.local/share/jarvis-local/memory.sqlite3"
+
+
+@dataclass(frozen=True)
 class ApplicationConfig:
     name: str
     command: tuple[str, ...]
@@ -307,6 +325,9 @@ class Config:
     stt: STTConfig = STTConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
     plugins: PluginConfig = PluginConfig()
+    files: FileConfig = FileConfig()
+    reminders: ReminderConfig = ReminderConfig()
+    memory: MemoryConfig = MemoryConfig()
 
 
 def resolve_project_path(path: str | Path) -> Path:
@@ -373,6 +394,9 @@ def load_config(path: str | Path | None = None) -> Config:
         STTConfig(**_section(data, "stt")),
         _applications(data),
         PluginConfig(**_section(data, "plugins")),
+        FileConfig(**_section(data, "files")),
+        ReminderConfig(**_section(data, "reminders")),
+        MemoryConfig(**_section(data, "memory")),
     )
     if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0 or config.llm.max_tokens < 1:
         raise ValueError("context_size, timeout_seconds e max_tokens devem ser positivos")

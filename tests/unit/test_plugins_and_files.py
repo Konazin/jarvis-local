@@ -4,7 +4,7 @@ import pytest
 
 from jarvis_local.plugins import PluginLoader
 from jarvis_local.tools.executor import ToolExecutor
-from jarvis_local.tools.files import find_files, get_file_info, list_files
+from jarvis_local.tools.files import SafeFileAccess, copy_file, find_files, get_file_info, list_files
 from jarvis_local.tools.registry import ToolRegistry
 
 
@@ -81,6 +81,18 @@ def test_read_only_file_capabilities_are_bounded(tmp_path: Path) -> None:
     assert list_files(str(tmp_path), 10)["count"] == 2
     assert find_files(str(tmp_path), "*curriculo*", 10)["items"][0]["name"] == "curriculo.pdf"
     assert get_file_info(str(target))["size"] == 3
+
+
+def test_file_writes_stay_in_allowed_root_and_never_overwrite(tmp_path: Path) -> None:
+    access = SafeFileAccess((str(tmp_path),))
+    source = tmp_path / "source.txt"
+    source.write_text("x", encoding="utf-8")
+
+    assert copy_file(str(source), str(tmp_path / "copy.txt"), access)["changed"]
+    with pytest.raises(FileExistsError):
+        copy_file(str(source), str(tmp_path / "copy.txt"), access)
+    with pytest.raises(ValueError):
+        access.path("~/.ssh/id_rsa")
 
 
 @pytest.mark.parametrize("domain", ["", "not-a-domain"])
