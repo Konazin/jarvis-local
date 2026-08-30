@@ -6,7 +6,7 @@ import pytest
 
 from jarvis_local.apps.catalog import ApplicationCatalog, ApplicationDefinition
 from jarvis_local.tools import applications
-from jarvis_local.tools.applications import MAX_URL_LENGTH, build_application_tools
+from jarvis_local.tools.applications import MAX_APPLICATION_ENUM_VALUES, MAX_URL_LENGTH, build_application_tools
 from jarvis_local.tools.base import RiskLevel
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
@@ -86,6 +86,20 @@ def test_open_application_is_confirmed_and_schema_uses_alias_enum() -> None:
     assert tool.parameters["properties"]["application"]["enum"] == ["spotify", "vscode"]
     assert "Inicia" in tool.description
     assert "sucesso" not in tool.description
+
+
+def test_large_application_catalog_keeps_schema_bounded_and_validation():
+    catalog = ApplicationCatalog(
+        [
+            ApplicationDefinition(f"app-{index}", f"App {index}", ("app",))
+            for index in range(MAX_APPLICATION_ENUM_VALUES + 1)
+        ]
+    )
+    tool = next(item for item in build_application_tools(catalog) if item.name == "open_application")
+
+    application_schema = tool.parameters["properties"]["application"]
+    assert "enum" not in application_schema
+    assert application_schema["type"] == "string"
 
 
 def test_open_application_starts_exact_configured_command_without_waiting() -> None:

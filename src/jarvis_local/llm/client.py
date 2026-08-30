@@ -29,6 +29,7 @@ MAX_TOOL_CALLS_TOTAL = 8
 MAX_DOMAIN_EXPANSIONS = 2
 MAX_DOMAINS_PER_TURN = 4
 MAX_USER_ESTIMATED_TOKENS = 1024
+MAX_TOOL_SCHEMAS_BEFORE_PRUNING = 6
 CONTEXT_SAFETY_MARGIN_TOKENS = 64
 IMAGE_ESTIMATED_TOKENS = 512
 _DOMAIN_REQUEST_SCHEMA = {
@@ -48,6 +49,12 @@ _DOMAIN_REQUEST_SCHEMA = {
             "additionalProperties": False,
         },
     },
+}
+_SCHEMA_FALLBACK_PRIORITY = {
+    "system": ("get_system_status", "get_top_memory_processes", "get_disk_usage"),
+    "applications": ("open_application", "list_applications"),
+    "media": ("set_volume", "get_audio_status"),
+    "vision": ("observe_screen",),
 }
 
 BASE_SYSTEM_PROMPT = """Você é Yuki, uma assistente desktop local.
@@ -267,6 +274,11 @@ class LLMClient:
                 schemas = self._schemas_for_requirement(
                     registry, requirement, turn.domains, include_domain_request=route is not None
                 )
+                if self.context_config.prune_tool_schemas and len(schemas) > MAX_TOOL_SCHEMAS_BEFORE_PRUNING:
+                    fallback = self._schema_budget_fallback(registry, schemas)
+                    if len(fallback) < len(schemas):
+                        log.debug("using bounded tool schemas for local model compatibility")
+                        schemas = fallback
                 self._last_tools_exposed_count = len(schemas)
                 try:
                     prepared = compactor.prepare(messages, schemas, current_message_index)
@@ -523,7 +535,7 @@ class LLMClient:
         return names if domains is None else registry.names_for_domains(domains, names)
 
     def _schema_budget_fallback(self, registry: ToolRegistry, schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Keep a few tools per declared domain under context pressure."""
+        """Keep the smallest useful set per declared domain under context pressure."""
         groups: dict[str, list[str]] = {}
         has_domain_request = False
         for schema in schemas:
@@ -535,7 +547,11 @@ class LLMClient:
                 has_domain_request = True
                 continue
             groups.setdefault(registry.get(name).domain, []).append(name)
-        selected = [name for names in groups.values() for name in names[:3]]
+        selected = []
+        for domain, names in groups.items():
+            priority = _SCHEMA_FALLBACK_PRIORITY.get(domain, ())
+            ordered = [name for name in priority if name in names] + [name for name in names if name not in priority]
+            selected.extend(ordered[: 3 if domain == "system" else 2])
         real_schema_count = len(schemas) - int(has_domain_request)
         if len(selected) >= real_schema_count:
             return schemas
@@ -729,7 +745,7 @@ class LLMClient:
 
     @staticmethod
     def _textual_tool_sequence(content: str, registry: ToolRegistry) -> bool:
-        parts = [part.strip() for part in re.split(r"[;,|]+", content) if part.strip()]
+        parts = [part.strip() for part in re.split(r"[;,|]+|\s+", content) if part.strip()]
         if len(parts) < 2:
             return False
         known = set(registry.names()) | {"request_tool_domain"}

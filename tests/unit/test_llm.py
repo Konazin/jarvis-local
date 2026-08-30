@@ -7,9 +7,10 @@ import pytest
 
 from jarvis_local.config import load_config
 from jarvis_local.llm.client import BASE_SYSTEM_PROMPT, MAX_TOOL_CALLS_PER_ROUND, LLMClient, LLMError
+from jarvis_local.llm.domain_router import DomainRouter
 from jarvis_local.llm.session import estimate_tokens
 from jarvis_local.tools import system
-from jarvis_local.tools.base import RiskLevel, Tool
+from jarvis_local.tools.base import RiskLevel, Tool, ToolObservation
 from jarvis_local.tools.executor import ToolExecutor
 from jarvis_local.tools.registry import ToolRegistry
 from jarvis_local.tools.system import DISK_USAGE_TOOL, FIND_PROCESSES_TOOL, SYSTEM_STATUS_TOOL
@@ -102,6 +103,113 @@ def test_multimodal_chat_rejects_non_loopback_server():
 
     with pytest.raises(LLMError, match="loopback"):
         llm.chat("O que você vê?", ToolRegistry(), image=item)
+
+
+def test_tool_observation_image_survives_next_llm_request():
+    requests = []
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {"id": "observe", "function": {"name": "observe_screen", "arguments": "{}"}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "Vejo uma janela."}}]}),
+        ]
+    )
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return next(responses)
+
+    registry = ToolRegistry()
+    capture = ScreenCapture(b"png", "image/png", 10, 10, CaptureTarget.FULL_SCREEN, 1.0)
+    registry.register(
+        Tool(
+            "observe_screen",
+            "observe",
+            {"type": "object"},
+            RiskLevel.SAFE,
+            lambda: ToolObservation("captura atual", capture),
+            domain="vision",
+        )
+    )
+    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": ["vision"]})
+    llm = LLMClient(
+        load_config().llm,
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        domain_router=router,
+        capabilities_provider=lambda: SimpleNamespace(supports_vision=True),
+    )
+
+    assert llm.chat("O que você vê?", registry) == "Vejo uma janela."
+    tool_message = requests[1]["messages"][-1]
+    assert tool_message["role"] == "tool"
+    assert tool_message["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,cG5n"},
+    }
+
+
+def test_textual_pseudotool_is_retried_without_reaching_ui():
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "request_tool_domain; request_tool_domain"}}]},
+            ),
+            httpx.Response(200, json={"choices": [{"message": {"content": "resposta normal"}}]}),
+        ]
+    )
+    registry = ToolRegistry()
+    registry.register(Tool("action", "action", {"type": "object"}, RiskLevel.SAFE, lambda: {}))
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))))
+
+    assert llm.chat("faça", registry) == "resposta normal"
+
+
+def test_degenerate_response_is_replaced_with_short_safe_error():
+    content = " ".join(["abrir_pagina"] * 20)
+    llm = client(httpx.Response(200, json={"choices": [{"message": {"content": content}}]}))
+
+    assert llm.chat("abra", ToolRegistry()) == "Não consegui concluir essa solicitação com segurança."
+
+
+def test_schema_budget_fallback_keeps_system_status_and_process_tools():
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    registry = ToolRegistry()
+    for name in ("get_system_status", "get_top_memory_processes", "extra_one", "extra_two", "extra_three"):
+        registry.register(
+            Tool(
+                name,
+                "x" * (5000 if name.startswith("extra") else 20),
+                {"type": "object"},
+                RiskLevel.SAFE,
+                lambda: {},
+                domain="system",
+            )
+        )
+    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": ["system"]})
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)), domain_router=router)
+
+    assert llm.chat("status", registry) == "ok"
+    names = [item["function"]["name"] for item in requests[0]["tools"]]
+    assert "get_system_status" in names
+    assert "get_top_memory_processes" in names
 
 
 def test_raw_registered_tool_call_is_retried_without_execution() -> None:

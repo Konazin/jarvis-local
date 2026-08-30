@@ -12,6 +12,20 @@ from jarvis_local.tools.base import RiskLevel, Tool
 from jarvis_local.tools.registry import ToolRegistry
 
 
+def test_empty_live_route_uses_local_capability_fallback() -> None:
+    transport = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200, json={"choices": [{"message": {"content": '{"domains":[],"confidence":1}'}}]}
+        )
+    )
+    router = DomainRouter(load_config().llm, httpx.Client(transport=transport))
+
+    route = router.route("Quanto de RAM estou usando?")
+
+    assert route.failed
+    assert {"system", "applications", "media", "vision"} <= set(route.domains)
+
+
 def test_domain_router_accepts_categories_but_never_tool_names() -> None:
     config = replace(load_config().llm)
     router = DomainRouter(config, classifier=lambda _text: {"domains": ["system", "get_system_status"]})
@@ -80,6 +94,26 @@ def test_llm_exposes_selected_domain_and_keeps_auto_tool_choice() -> None:
     assert requests[0]["tool_choice"] == "auto"
     assert llm.last_metrics.domains_selected == ("applications",)
     assert llm.last_metrics.tools_exposed_count == 2
+
+
+@pytest.mark.parametrize(
+    ("domain", "tool_name"),
+    [("system", "get_system_status"), ("applications", "open_application"), ("media", "set_volume")],
+)
+def test_selected_domain_schema_reaches_http_request(domain: str, tool_name: str) -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    registry = ToolRegistry()
+    registry.register(Tool(tool_name, tool_name, {"type": "object"}, RiskLevel.SAFE, lambda: {}, domain=domain))
+    router = DomainRouter(load_config().llm, classifier=lambda _text: {"domains": [domain]})
+    llm = LLMClient(load_config().llm, httpx.Client(transport=httpx.MockTransport(handler)), domain_router=router)
+
+    assert llm.chat("pedido", registry) == "ok"
+    assert tool_name in [item["function"]["name"] for item in requests[0]["tools"]]
 
 
 def test_dynamic_domain_expansion_adds_tools_on_next_round() -> None:

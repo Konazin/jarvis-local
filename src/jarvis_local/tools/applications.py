@@ -17,6 +17,7 @@ from jarvis_local.apps.catalog import ApplicationCatalog
 from .base import RiskLevel, Tool
 
 MAX_URL_LENGTH = 2048
+MAX_APPLICATION_ENUM_VALUES = 64
 WAIT_TIMEOUT_SECONDS = 3.0
 _PROCESS_ERRORS = (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess)
 log = logging.getLogger(__name__)
@@ -202,14 +203,17 @@ def build_application_tools(
     launcher = subprocess.Popen if launcher is None else launcher
     opener = webbrowser.open if opener is None else opener
     process_iter = _process_iter(process_iter)
+    application = {
+        "type": "string",
+        "description": "Alias do aplicativo configurado.",
+    }
+    aliases = list(catalog.aliases())
+    if len(aliases) <= MAX_APPLICATION_ENUM_VALUES:
+        application["enum"] = aliases
     application_parameters = {
         "type": "object",
         "properties": {
-            "application": {
-                "type": "string",
-                "enum": list(catalog.aliases()),
-                "description": "Alias do aplicativo configurado.",
-            }
+            "application": application,
         },
         "required": ["application"],
         "additionalProperties": False,

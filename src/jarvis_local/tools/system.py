@@ -186,7 +186,7 @@ _TOP_MEMORY_PARAMETERS = {
 
 SYSTEM_STATUS_TOOL = Tool(
     "get_system_status",
-    "Observa o uso global atual de CPU e memória RAM. Use para carga total do computador; "
+    "Observa o uso total atual de CPU e memória RAM do computador. Use para a carga total do sistema; "
     "não lista processos nem identifica qual aplicativo consome memória.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
@@ -231,8 +231,8 @@ FIND_PROCESSES_TOOL = Tool(
 )
 TOP_MEMORY_PROCESSES_TOOL = Tool(
     "get_top_memory_processes",
-    "Observa os processos que mais consomem memória RAM. Use para ranking por processo; não use para o uso total do "
-    "computador.",
+    "Lista o ranking dos processos individuais por consumo. Use somente quando o usuário perguntar qual processo ou "
+    "aplicativo está usando mais memória; não use para saber o uso total de memória do computador.",
     _TOP_MEMORY_PARAMETERS,
     RiskLevel.SAFE,
     get_top_memory_processes,
