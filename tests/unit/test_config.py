@@ -41,7 +41,6 @@ def test_defaults() -> None:
 
 
 def test_context_and_vision_config_validate() -> None:
-    assert ContextConfig().prune_tool_schemas
     assert VisionConfig().capture_policy == "explicit"
     assert VisionConfig().max_capture_dimension == 1920
     with pytest.raises(ValueError):

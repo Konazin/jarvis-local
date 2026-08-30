@@ -80,11 +80,14 @@ def test_list_is_safe_and_does_not_expose_commands() -> None:
     assert "command" not in str(tool.execute())
 
 
-def test_open_application_is_confirmed_and_schema_uses_alias_enum() -> None:
+def test_open_application_is_confirmed_and_schema_validates_in_python() -> None:
     tool = tools()["open_application"]
     assert tool.risk_level is RiskLevel.CONFIRM
-    assert tool.parameters["properties"]["application"]["enum"] == ["spotify", "vscode"]
-    assert "Inicia" in tool.description
+    assert tool.parameters["properties"]["application"] == {
+        "type": "string",
+        "description": "Nome ou alias curto do aplicativo.",
+    }
+    assert "Abre" in tool.description
     assert "sucesso" not in tool.description
 
 
@@ -274,7 +277,8 @@ def test_close_schema_is_confirmed_and_only_allows_process_capable_aliases() -> 
     toolset = {tool.name: tool for tool in build_application_tools(lifecycle_catalog(), process_iter=lambda _: [])}
     tool = toolset["close_application"]
     assert tool.risk_level is RiskLevel.CONFIRM
-    assert tool.parameters["properties"]["application"]["enum"] == ["discord", "spotify"]
+    assert tool.parameters["properties"]["application"]["type"] == "string"
+    assert "enum" not in tool.parameters["properties"]["application"]
 
 
 def test_close_not_running_and_missing_process_names_skip_confirmation() -> None:

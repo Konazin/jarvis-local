@@ -34,7 +34,6 @@ soft_limit_ratio = 0.82
 recent_turns = 3
 summary_max_estimated_tokens = 384
 max_tool_result_estimated_tokens = 512
-prune_tool_schemas = true
 
 [tts]
 engine = "kokoro"

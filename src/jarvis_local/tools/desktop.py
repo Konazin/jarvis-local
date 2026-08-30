@@ -189,9 +189,7 @@ _BOOLEAN_ARGUMENTS = {
 DESKTOP_TOOLS = (
     Tool(
         "get_active_window",
-        "Observa título e classe da janela X11 ativa. Use para saber qual janela está em foco; não lê seu conteúdo, "
-        "abas "
-        "ou controles.",
+        "Consulta título e classe da janela X11 ativa; não lê conteúdo.",
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_active_window,
@@ -199,7 +197,7 @@ DESKTOP_TOOLS = (
     ),
     Tool(
         "get_audio_status",
-        "Observa volume e mute do dispositivo de saída padrão via PipeWire/wpctl. Não altera áudio.",
+        "Consulta volume e mute via PipeWire; não altera áudio.",
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_audio_status,
@@ -207,7 +205,7 @@ DESKTOP_TOOLS = (
     ),
     Tool(
         "set_volume",
-        "Altera o volume de saída padrão entre 0 e 100 por cento, após confirmação. Não escolhe outro dispositivo.",
+        "Altera volume de saída entre 0 e 100%, após confirmação.",
         _PERCENT_ARGUMENTS,
         RiskLevel.CONFIRM,
         set_volume,
@@ -254,9 +252,7 @@ DESKTOP_TOOLS = (
     ),
     Tool(
         "get_network_status",
-        "Observa interfaces ativas e contadores locais de rede. Não consulta IP público, credenciais, rotas ou "
-        "conteúdo de "
-        "rede.",
+        "Consulta interfaces ativas e contadores locais; não expõe IP público ou credenciais.",
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_network_status,
@@ -282,7 +278,7 @@ DESKTOP_TOOLS = (
     ),
     Tool(
         "get_wifi_status",
-        "Consulta se o rádio Wi-Fi está ligado via NetworkManager; não expõe redes nem credenciais.",
+        "Consulta o estado do Wi-Fi via NetworkManager; não expõe redes.",
         _NO_ARGUMENTS,
         RiskLevel.SAFE,
         get_wifi_status,
@@ -290,7 +286,7 @@ DESKTOP_TOOLS = (
     ),
     Tool(
         "set_wifi",
-        "Liga ou desliga apenas o rádio Wi-Fi após confirmação; não conecta redes nem recebe senhas.",
+        "Liga ou desliga o rádio Wi-Fi após confirmação; não conecta redes.",
         _BOOLEAN_ARGUMENTS,
         RiskLevel.CONFIRM,
         set_wifi,

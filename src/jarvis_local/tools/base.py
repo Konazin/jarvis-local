@@ -58,7 +58,22 @@ class Tool:
         return self.risk_level
 
     def schema(self) -> dict[str, Any]:
+        def compact(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {
+                    key: compact(item)
+                    for key, item in value.items()
+                    if key not in {"additionalProperties", "description"}
+                }
+            if isinstance(value, list):
+                return [compact(item) for item in value]
+            return value
+
         return {
             "type": "function",
-            "function": {"name": self.name, "description": self.description, "parameters": self.parameters},
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": compact(self.parameters),
+            },
         }

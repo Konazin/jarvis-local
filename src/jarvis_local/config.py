@@ -50,7 +50,6 @@ class ContextConfig:
     recent_turns: int = 3
     summary_max_estimated_tokens: int = 384
     max_tool_result_estimated_tokens: int = 512
-    prune_tool_schemas: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.enabled, bool):
@@ -76,8 +75,6 @@ class ContextConfig:
             or self.max_tool_result_estimated_tokens < 1
         ):
             raise ValueError("context.max_tool_result_estimated_tokens deve ser positivo")
-        if not isinstance(self.prune_tool_schemas, bool):
-            raise ValueError("context.prune_tool_schemas deve ser booleano")
 
 
 @dataclass(frozen=True)

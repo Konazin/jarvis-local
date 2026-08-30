@@ -17,6 +17,7 @@ from jarvis_local.apps.catalog import ApplicationCatalog
 from .base import RiskLevel, Tool
 
 MAX_URL_LENGTH = 2048
+# Kept for callers that used the old diagnostic threshold; runtime schemas no longer use it.
 MAX_APPLICATION_ENUM_VALUES = 64
 WAIT_TIMEOUT_SECONDS = 3.0
 _PROCESS_ERRORS = (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess)
@@ -205,11 +206,8 @@ def build_application_tools(
     process_iter = _process_iter(process_iter)
     application = {
         "type": "string",
-        "description": "Alias do aplicativo configurado.",
+        "description": "Nome ou alias curto do aplicativo.",
     }
-    aliases = list(catalog.aliases())
-    if len(aliases) <= MAX_APPLICATION_ENUM_VALUES:
-        application["enum"] = aliases
     application_parameters = {
         "type": "object",
         "properties": {
@@ -221,8 +219,7 @@ def build_application_tools(
     tools: list[Tool] = [
         Tool(
             "list_applications",
-            "Lista aliases de aplicativos conhecidos e autorizados para abertura. Não inicia nada e não lista todos os "
-            "processos.",
+            "Lista aplicativos conhecidos; não inicia nada.",
             {"type": "object", "properties": {}, "additionalProperties": False},
             RiskLevel.SAFE,
             lambda: list_applications(catalog),
@@ -233,9 +230,7 @@ def build_application_tools(
         tools.append(
             Tool(
                 "open_application",
-                "Inicia um aplicativo conhecido pelo alias, após confirmação. Use apenas para ação explícita; "
-                "o alias vem "
-                "do catálogo e não há shell ou comando arbitrário.",
+                "Abre um aplicativo instalado por nome ou alias, após confirmação.",
                 application_parameters,
                 RiskLevel.CONFIRM,
                 lambda application: _open_application(catalog, launcher, application),
@@ -247,12 +242,10 @@ def build_application_tools(
                 domain="applications",
             )
         )
-    close_aliases = [alias for alias in catalog.aliases() if catalog.resolve(alias).process_names]
     tools.append(
         Tool(
             "list_running_applications",
-            "Observa quais aplicativos conhecidos estão em execução e conta instâncias. Não lê janelas, abas ou "
-            "conteúdo interno.",
+            "Lista aplicativos conhecidos em execução e suas instâncias.",
             {"type": "object", "properties": {}, "additionalProperties": False},
             RiskLevel.SAFE,
             lambda: list_running_applications(catalog, process_iter),
@@ -262,16 +255,13 @@ def build_application_tools(
     tools.append(
         Tool(
             "close_application",
-            "Fecha processos de um aplicativo conhecido, após confirmação e somente quando há process_names "
-            "confiáveis. "
-            "Pode deixar instâncias vivas e não força encerramento.",
+            "Fecha processos de um aplicativo conhecido após confirmação; pode deixar instâncias vivas.",
             {
                 "type": "object",
                 "properties": {
                     "application": {
                         "type": "string",
-                        "enum": close_aliases,
-                        "description": "Alias do aplicativo configurado.",
+                        "description": "Nome ou alias curto do aplicativo.",
                     }
                 },
                 "required": ["application"],
@@ -292,8 +282,7 @@ def build_application_tools(
     tools.append(
         Tool(
             "open_url",
-            "Abre uma URL http/https no navegador, após confirmação. Não aceita credenciais, shell, arquivos locais ou "
-            "outros esquemas.",
+            "Abre uma URL http/https após confirmação; não aceita credenciais ou shell.",
             {
                 "type": "object",
                 "properties": {"url": {"type": "string", "maxLength": MAX_URL_LENGTH}},

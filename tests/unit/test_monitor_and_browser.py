@@ -1,6 +1,6 @@
 from jarvis_local.config import BrowserConfig, MonitorConfig, ProactiveConfig
 from jarvis_local.core.monitor import ProactiveGate, SystemMonitor
-from jarvis_local.tools.browser import BrowserController
+from jarvis_local.tools.browser import BrowserController, build_browser_tools
 
 
 def test_monitor_and_proactivity_are_disabled_by_default():
@@ -12,3 +12,5 @@ def test_monitor_and_proactivity_are_disabled_by_default():
 def test_browser_reports_disabled_without_importing_playwright():
     result = BrowserController(BrowserConfig()).snapshot()
     assert result == {"status": "unavailable", "reason": "browser_disabled"}
+    tools, _browser = build_browser_tools(BrowserConfig())
+    assert tools == ()

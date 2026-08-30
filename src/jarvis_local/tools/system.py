@@ -186,30 +186,28 @@ _TOP_MEMORY_PARAMETERS = {
 
 SYSTEM_STATUS_TOOL = Tool(
     "get_system_status",
-    "Observa o uso total atual de CPU e memória RAM do computador. Use para a carga total do sistema; "
-    "não lista processos nem identifica qual aplicativo consome memória.",
+    "Obtém CPU e RAM atuais do sistema; não lista processos.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_status,
 )
 SYSTEM_INFO_TOOL = Tool(
     "get_system_info",
-    "Observa sistema operacional, versão, arquitetura e versão do Python. Não informa estado de processos ou hardware "
-    "em tempo real.",
+    "Consulta sistema operacional, arquitetura e Python; não é estado em tempo real.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_system_info,
 )
 DISK_USAGE_TOOL = Tool(
     "get_disk_usage",
-    "Observa espaço total, usado e livre em um disco. Use para armazenamento; não procura arquivos nem altera dados.",
+    "Consulta espaço total, usado e livre; não procura arquivos.",
     _DISK_PARAMETERS,
     RiskLevel.SAFE,
     get_disk_usage,
 )
 BATTERY_STATUS_TOOL = Tool(
     "get_battery_status",
-    "Observa carga, alimentação e tempo restante da bateria. Pode retornar indisponível em desktops sem bateria.",
+    "Consulta bateria e alimentação; pode estar indisponível em desktops.",
     _EMPTY_PARAMETERS,
     RiskLevel.SAFE,
     get_battery_status,
@@ -223,16 +221,14 @@ SYSTEM_UPTIME_TOOL = Tool(
 )
 FIND_PROCESSES_TOOL = Tool(
     "find_processes",
-    "Observa processos em execução e procura por nome para verificar se um aplicativo está rodando. "
-    "Não fornece abas do navegador, URLs, documentos, conteúdo visual ou estado interno da aplicação.",
+    "Lista processos cujo nome corresponde à busca; não lê conteúdo.",
     _PROCESS_SEARCH_PARAMETERS,
     RiskLevel.SAFE,
     find_processes,
 )
 TOP_MEMORY_PROCESSES_TOOL = Tool(
     "get_top_memory_processes",
-    "Lista o ranking dos processos individuais por consumo. Use somente quando o usuário perguntar qual processo ou "
-    "aplicativo está usando mais memória; não use para saber o uso total de memória do computador.",
+    "Lista os processos que mais usam memória atualmente.",
     _TOP_MEMORY_PARAMETERS,
     RiskLevel.SAFE,
     get_top_memory_processes,

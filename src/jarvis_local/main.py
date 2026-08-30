@@ -1,4 +1,5 @@
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -11,14 +12,13 @@ from .core.assistant import Assistant
 from .core.monitor import ProactiveGate, SystemMonitor
 from .core.runtime_events import RuntimeEventController
 from .llm.client import LLMClient
-from .llm.domain_router import DomainRouter
 from .llm.runtime import LLMRuntimeManager
 from .llm.session import ConversationSession
 from .plugins import PluginLoader
 from .tools.applications import build_application_tools
 from .tools.browser import build_browser_tools
 from .tools.desktop import DESKTOP_TOOLS
-from .tools.desktop_control import build_desktop_control_tools
+from .tools.desktop_control import build_desktop_control_tools, desktop_capabilities
 from .tools.executor import ToolExecutor
 from .tools.files import build_file_tools
 from .tools.persistence import build_memory_tools, build_reminder_tools
@@ -29,6 +29,26 @@ from .tts.manager import TTSManager
 from .ui.confirmation import ConfirmationBridge
 from .ui.tray import Tray
 from .ui.window import Window
+
+
+def _desktop_unavailable(environ: dict[str, str] | None = None) -> set[str]:
+    capabilities = desktop_capabilities(environ)
+    unavailable: set[str] = set()
+    if capabilities["session"] != "x11" or not capabilities["xprop"]:
+        unavailable.add("get_active_window")
+    if shutil.which("wpctl") is None:
+        unavailable.update({"get_audio_status", "set_volume", "toggle_mute"})
+    if shutil.which("playerctl") is None:
+        unavailable.update({"media_play_pause", "media_next", "media_previous"})
+    if shutil.which("brightnessctl") is None:
+        unavailable.update({"get_brightness", "set_brightness"})
+    if shutil.which("nmcli") is None:
+        unavailable.update({"get_wifi_status", "set_wifi"})
+    if capabilities["session"] != "x11" or not capabilities["xdotool"]:
+        unavailable.update({"move_mouse", "click", "scroll", "type_text", "press_key", "focus_window"})
+    if capabilities["session"] != "x11" or not capabilities["xdotool"] or not capabilities["wmctrl"]:
+        unavailable.add("active_window_action")
+    return unavailable
 
 
 def main() -> None:
@@ -46,12 +66,13 @@ def main() -> None:
         include_flatpak=True,
     )
     for tool in build_application_tools(catalog):
-        tools.register(tool)
+        tools.register(tool, available=tool.name != "open_url" or config.browser.enabled)
     vision_access = VisionAccess(config.vision, session_authorized=config.vision.capture_policy == "session")
+    unavailable_desktop = _desktop_unavailable()
     for tool in DESKTOP_TOOLS:
-        tools.register(tool)
+        tools.register(tool, available=tool.name not in unavailable_desktop)
     for tool in build_desktop_control_tools(lambda: vision_access.last_capture, catalog):
-        tools.register(tool)
+        tools.register(tool, available=tool.name not in unavailable_desktop)
     for tool in build_vision_tools(config.vision, access=vision_access):
         tools.register(tool)
     for tool in build_file_tools(config.files):
@@ -82,7 +103,6 @@ def main() -> None:
         capabilities_provider=lambda: runtime.capabilities,
         context_config=config.context,
         vision_permission=vision_access,
-        domain_router=DomainRouter(config.llm),
     )
     session = ConversationSession(config.conversation, config.context)
     tts = TTSManager(config.tts, config.audio.output_device, config.performance.memory_pressure_threshold)

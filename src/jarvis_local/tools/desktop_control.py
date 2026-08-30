@@ -327,7 +327,7 @@ def build_desktop_control_tools(capture_provider: Callable[[], Any], catalog: Ap
             "Foca uma aplicação conhecida do catálogo, após confirmação.",
             {
                 "type": "object",
-                "properties": {"application": {"type": "string", "enum": list(catalog.aliases())}},
+                "properties": {"application": {"type": "string", "description": "Nome ou alias da aplicação."}},
                 "required": ["application"],
                 "additionalProperties": False,
             },

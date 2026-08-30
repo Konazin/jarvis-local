@@ -103,6 +103,8 @@ class BrowserController:
 
 def build_browser_tools(config: BrowserConfig) -> tuple[tuple[Tool, ...], BrowserController]:
     browser = BrowserController(config)
+    if not config.enabled:
+        return (), browser
     element = {
         "type": "object",
         "properties": {"element_id": {"type": "integer", "minimum": 1}},
