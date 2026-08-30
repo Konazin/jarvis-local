@@ -15,8 +15,8 @@ e configuração (`memory/`), dashboard, UI, dependências e `LICENSE`.
 ## Decisões clean-room
 
 As ideias úteis foram reduzidas a contratos: capabilities declaradas,
-descoberta determinística, isolamento de falha de plugins, seleção ampla de
-domínio antes da decisão de tool e primitives pequenas para evolução futura.
+descoberta determinística, isolamento de falha de plugins, disponibilidade
+estrutural antes da decisão de tool e primitives pequenas para evolução futura.
 O código do Mark-LI, seus mapas de aliases, chamadas Gemini, dashboard,
 automação arbitrária, memória persistente e mutações de arquivos foram
 rejeitados ou adiados.
@@ -24,9 +24,8 @@ rejeitados ou adiados.
 No código de produção foram reimplementados independentemente:
 
 - metadata `domain`, risco e mutabilidade no `Tool` existente;
-- filtro por domínio no `ToolRegistry`;
-- `DomainRouter` local, que retorna apenas categorias e mantém `tool_choice=auto`;
-- expansão limitada por `request_tool_domain`;
+- labels de domínio no `ToolRegistry` para telemetria, sem gate de intenção;
+- exposição de todas as tools estruturalmente disponíveis, mantendo `tool_choice=auto`;
 - loader de plugins confiáveis usando o mesmo `ToolExecutor`;
 - capabilities de arquivos com raízes configuradas e descoberta Linux já existente;
 - lembretes e memória SQLite explícita, controle X11 limitado e browser Playwright opcional.
@@ -34,6 +33,13 @@ No código de produção foram reimplementados independentemente:
 O launcher continua sem `shell=True`, privilegia catálogo explícito, PATH,
 XDG desktop entries e Flatpak configurado. A monitorização usa `psutil` e não
 assume NVIDIA; o áudio existente via `wpctl` foi preservado.
+
+O fluxo intencional da Yuki é `ToolRegistry → structural availability → all
+available compact tools → Qwen`. O modelo escolhe pela descrição funcional;
+labels servem para telemetria e agrupamento. Não há `request_tool_domain` no
+prompt ou nos schemas normais. Escolhas erradas do modelo permanecem dados
+observáveis para melhorar descrições e treinamento, em vez de serem ocultadas
+por um intent router.
 
 ## Limites de segurança e plataforma
 

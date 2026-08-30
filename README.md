@@ -9,16 +9,19 @@ Assistente desktop local e leve para Linux, em desenvolvimento inicial.
 ```text
 texto do usuário
       ↓
-DomainRouter ── 1–2 domínios ── llama.cpp / Qwen ── loop agentivo (tool_choice=auto)
+ToolRegistry ── disponibilidade estrutural ── todas as tools compactas disponíveis
+      ↓
+llama.cpp / Qwen ── tool_choice=auto ── loop agentivo
    ├── Tool Registry / executor seguro
    └── Kokoro TTS → áudio
 ```
 
-O roteador reduz os schemas enviados ao modelo pequeno, mas não escolhe uma
-tool: o Qwen continua decidindo livremente entre as capabilities do domínio.
-Quando uma categoria adicional é necessária, `request_tool_domain` pode
-habilitá-la por poucas rodadas. Uma pergunta conceitual pode ser respondida
-sem tools.
+O `domain` de cada tool é somente label/metadata para logs, agrupamento e
+debug; não filtra intenção nem decide o que o modelo pode considerar. O Qwen
+recebe todas as tools estruturalmente disponíveis e decide autonomamente entre
+responder, chamar uma tool ou continuar o loop. Isso é intencional: escolhas
+incorretas do modelo devem ser observadas, não corrigidas silenciosamente por
+um intent router.
 
 ## Stack
 
@@ -46,14 +49,14 @@ Com `thinking = false`, o cliente usa `/no_think` como fallback e também envia 
 
 ### Ações de aplicativos
 
-Os aplicativos configurados em `[applications]` continuam sendo a fonte explícita. O catálogo também pode descobrir executáveis seguros no `PATH`, entradas `.desktop` em diretórios XDG e, quando instalado, aplicativos Flatpak. O LLM recebe apenas aliases, e abrir um aplicativo exige confirmação; comandos reais nunca são fornecidos pelo modelo nem passam por shell. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
+Os aplicativos configurados em `[applications]` continuam sendo a fonte explícita. O catálogo também pode descobrir executáveis seguros no `PATH`, entradas `.desktop` em diretórios XDG e, quando instalado, aplicativos Flatpak. O LLM recebe apenas um nome ou alias curto; o catálogo Python resolve e valida o alvo, e abrir um aplicativo exige confirmação. Comandos reais nunca são fornecidos pelo modelo nem passam por shell. URLs abertas pela Yuki aceitam somente `http` e `https`, também com confirmação.
 
 A Yuki também lista aplicativos configurados em execução e pode solicitar seu fechamento, sempre com confirmação. O fechamento compara nomes de processo exatos definidos em `process_names`; não há encerramento arbitrário por PID, shell ou comando externo.
 
 O domínio `files` oferece somente `list_files`, `find_files` e `get_file_info`,
 com limites locais e sem leitura de conteúdo ou mutações.
 
-O pacote desktop também oferece consulta da janela ativa no X11, volume/mute, controles de mídia e interfaces de rede. `wpctl`, `playerctl` e `xprop` são capacidades opcionais: quando ausentes, a tool retorna indisponibilidade estruturada. Wayland não é tratado como se fosse X11.
+O pacote desktop também oferece consulta da janela ativa no X11, volume/mute, controles de mídia e interfaces de rede. `wpctl`, `playerctl`, `brightnessctl`, `nmcli` e o backend X11 são capacidades opcionais: quando ausentes, as tools correspondentes não são expostas ao modelo. Wayland não é tratado como se fosse X11.
 
 ### Resposta e voz
 
@@ -88,13 +91,13 @@ O backend de wake é opcional e configurado em `[wake]`, sem download automátic
 
 ### Percepção visual
 
-`vision.enabled = false` mantém a visão desligada por padrão. A capability `observe_screen` oferece `previous_window` (padrão), `active_window` e `full_screen`; o botão `Olhar` usa a janela anterior para não capturar a própria Yuki. A permissão explícita é apenas um gate: o modelo continua decidindo se deve observar. Capturas são PNG em memória, enviadas como observação multimodal ao mesmo llama-server quando `/props` anuncia `modalities.vision = true`; Wayland retorna indisponibilidade clara. `max_capture_dimension` limita o maior lado e retenção de debug é opcional, expira em no máximo 1800 segundos.
+`vision.enabled = false` mantém a visão desligada por padrão. A capability `observe_screen` oferece `previous_window` (padrão), `active_window` e `full_screen`; o botão `Olhar` usa a janela anterior para não capturar a própria Yuki. A permissão explícita é apenas um gate: o modelo continua decidindo se deve observar. Capturas são PNG em memória, enviadas como observação multimodal ao mesmo llama-server quando `/props` anuncia `modalities.vision = true`; a imagem sobrevive somente à inferência imediatamente necessária e expira depois. Wayland retorna indisponibilidade clara. `max_capture_dimension` limita o maior lado e retenção de debug é opcional, expira em no máximo 1800 segundos.
 
 Wake/VAD são leves e transitórios; Whisper e captura visual não ficam residentes. O llama-server e o Kokoro seguem sendo os componentes residentes já existentes. Não há benchmark de hardware embutido nesta etapa.
 
 ### Plugins locais e automação
 
-Tools são organizadas por domínio e passam pelo executor central: observações são SAFE, alterações exigem confirmação
+Tools são rotuladas por domínio para telemetria e passam pelo executor central: observações são SAFE, alterações exigem confirmação
 e ações perigosas são bloqueadas. O controle visual é X11-only, usa coordenadas normalizadas da última captura e não
 aceita shell, PID, seletor ou atalho arbitrário. Arquivos respeitam `[files]`, sem sobrescrita e com lixeira preferida.
 Lembretes e memórias usam SQLite local; memória só é consultada por tool explícita. O browser é opcional, usa
@@ -112,7 +115,7 @@ removê-los.
 
 ### Contexto da sessão
 
-O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O `ContextCompactor` usa um limite suave (82% por padrão) antes do hard limit de `llm.context_size`, remove somente turns antigos completos e compacta resultados grandes antes de cada POST, inclusive no meio de uma rodada. Todas as tools disponíveis são expostas quando cabem; sob pressão, a falha é ampla e determinística, sem roteamento por palavra-chave. Preferências e decisões antigas podem entrar em um resumo determinístico curto. Nada disso é persistido em disco e desaparece ao fechar o aplicativo.
+O Yuki mantém em RAM os últimos pares de mensagens user/assistant da sessão atual e os envia como contexto em perguntas seguintes. O `ContextCompactor` usa um limite suave (82% por padrão) antes do hard limit de `llm.context_size`, remove somente turns antigos completos e compacta resultados grandes antes de cada POST, inclusive no meio de uma rodada. Todas as tools estruturalmente disponíveis, com schemas compactos, são expostas; o compactor nunca escolhe tools por intenção. Preferências e decisões antigas podem entrar em um resumo determinístico curto. Nada disso é persistido em disco e desaparece ao fechar o aplicativo.
 
 Para o setup multimodal atual, `config.example.toml` documenta `Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M` como opção. O exemplo mantém visão desligada por segurança; ative-a localmente somente quando o `/props` do servidor anunciar a modalidade visual.
 
@@ -127,7 +130,7 @@ Benchmarks experimentais permanecem em `tests/manual/` e não são executados pe
 
 ## TTS
 
-Runtime oficial: Kokoro 82M, voz `pf_dora`, `lang_code = "p"`, velocidade 1.0.
+Runtime oficial: Kokoro 82M, voz `pm_alex`, `lang_code = "p"`, velocidade 0.93.
 
 ## Roadmap
 
