@@ -258,6 +258,21 @@ class STTConfig:
 
 
 @dataclass(frozen=True)
+class PluginConfig:
+    enabled: bool = True
+    disabled: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("plugins.enabled deve ser booleano")
+        if not isinstance(self.disabled, (tuple, list)) or any(
+            not isinstance(name, str) or not name.strip() for name in self.disabled
+        ):
+            raise ValueError("plugins.disabled deve ser uma lista de nomes não vazios")
+        object.__setattr__(self, "disabled", tuple(dict.fromkeys(name.strip() for name in self.disabled)))
+
+
+@dataclass(frozen=True)
 class ApplicationConfig:
     name: str
     command: tuple[str, ...]
@@ -291,6 +306,7 @@ class Config:
     vision: VisionConfig = VisionConfig()
     stt: STTConfig = STTConfig()
     applications: Mapping[str, ApplicationConfig] = MappingProxyType({})
+    plugins: PluginConfig = PluginConfig()
 
 
 def resolve_project_path(path: str | Path) -> Path:
@@ -356,6 +372,7 @@ def load_config(path: str | Path | None = None) -> Config:
         VisionConfig(**_section(data, "vision")),
         STTConfig(**_section(data, "stt")),
         _applications(data),
+        PluginConfig(**_section(data, "plugins")),
     )
     if config.llm.context_size < 1 or config.llm.timeout_seconds <= 0 or config.llm.max_tokens < 1:
         raise ValueError("context_size, timeout_seconds e max_tokens devem ser positivos")

@@ -49,9 +49,14 @@ def main() -> None:
         tools.register(tool)
     for tool in FILES_TOOLS:
         tools.register(tool)
-    plugin_loader = PluginLoader(Path(__file__).resolve().parents[2] / "plugins", set(tools.names()))
-    for tool in plugin_loader.tools():
-        tools.register(tool)
+    if config.plugins.enabled:
+        plugin_loader = PluginLoader(
+            Path(__file__).resolve().parents[2] / "plugins",
+            set(tools.names()),
+            set(config.plugins.disabled),
+        )
+        for tool in plugin_loader.tools():
+            tools.register(tool)
     app = QApplication(sys.argv)
     confirmation = ConfirmationBridge()
     executor = ToolExecutor(tools, approval_handler=confirmation.request)

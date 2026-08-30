@@ -101,6 +101,8 @@ trusted local code: importar o arquivo executa código de topo e não constitui
 sandbox. A execução não recebe objetos da UI, sessão ou cliente LLM e passa
 pelo mesmo `ToolExecutor` das capabilities internas. A proveniência da
 arquitetura está em [`docs/research/mark_li_architecture.md`](docs/research/mark_li_architecture.md).
+Use `[plugins].disabled = ["nome_do_plugin"]` para desabilitar plugins sem
+removê-los.
 
 ### Contexto da sessão
 

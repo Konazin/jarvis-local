@@ -6,6 +6,7 @@ from jarvis_local.config import (
     AudioConfig,
     ContextConfig,
     DebugConfig,
+    PluginConfig,
     STTConfig,
     VADConfig,
     VisionConfig,
@@ -50,6 +51,12 @@ def test_context_and_vision_config_validate() -> None:
         VisionConfig(capture_policy="always")
     with pytest.raises(ValueError):
         VisionConfig(max_capture_dimension=128)
+
+
+def test_plugin_config_normalizes_disabled_names() -> None:
+    assert PluginConfig(disabled=[" demo ", "demo"]).disabled == ("demo",)
+    with pytest.raises(ValueError):
+        PluginConfig(disabled=[""])
 
 
 @pytest.mark.parametrize("field", ["threshold", "cooldown_seconds", "pre_roll_ms"])

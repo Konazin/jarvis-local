@@ -89,6 +89,10 @@ threads = 4
 timeout_seconds = 30.0
 initial_prompt = "Yuki é uma assistente de computador. Termos comuns: memória RAM, CPU, GPU, processos, megabytes, gigabytes, Firefox, Discord, Spotify e VS Code."
 
+[plugins]
+enabled = true
+disabled = []
+
 # Exemplos: altere ou remova conforme os aplicativos instalados.
 [applications.firefox]
 name = "Firefox"
