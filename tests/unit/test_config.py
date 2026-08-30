@@ -26,7 +26,8 @@ def test_defaults() -> None:
     assert config.context.recent_turns == 3
     assert config.context.soft_limit_ratio == 0.82
     assert config.context.max_tool_result_estimated_tokens == 512
-    assert config.tts.voice == "pf_dora"
+    assert config.tts.voice == "pm_alex"
+    assert config.tts.speed == 0.93
     assert config.tts.mode == "resident"
     assert config.audio.input_device == "default"
     assert config.audio.max_recording_seconds == 30.0

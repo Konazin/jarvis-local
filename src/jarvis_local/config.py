@@ -85,8 +85,8 @@ class TTSConfig:
     engine: str = "kokoro"
     language: str = "pt-BR"
     lang_code: str = "p"
-    voice: str = "pf_dora"
-    speed: float = 1.0
+    voice: str = "pm_alex"
+    speed: float = 0.93
     mode: str = "resident"
     keep_alive_seconds: float = 60.0
     python: str = ".venv-kokoro/bin/python"
