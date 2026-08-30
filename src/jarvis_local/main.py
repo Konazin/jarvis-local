@@ -14,6 +14,7 @@ from .llm.runtime import LLMRuntimeManager
 from .llm.session import ConversationSession
 from .plugins import PluginLoader
 from .tools.applications import build_application_tools
+from .tools.browser import build_browser_tools
 from .tools.desktop import DESKTOP_TOOLS
 from .tools.desktop_control import build_desktop_control_tools
 from .tools.executor import ToolExecutor
@@ -57,6 +58,9 @@ def main() -> None:
     for tool in reminder_tools:
         tools.register(tool)
     for tool in build_memory_tools(config.memory):
+        tools.register(tool)
+    browser_tools, browser = build_browser_tools(config.browser)
+    for tool in browser_tools:
         tools.register(tool)
     if config.plugins.enabled:
         plugin_loader = PluginLoader(
@@ -109,6 +113,7 @@ def main() -> None:
         window.shutdown()
         confirmation.close()
         reminders.close()
+        browser.close()
         tts.close()
         runtime.close()
         llm.close()
