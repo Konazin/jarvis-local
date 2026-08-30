@@ -242,8 +242,8 @@ class Window(QWidget):
             self._on_state_changed("SPEAKING")
             self.assistant.tts.speak_async(
                 self.assistant.speech_normalizer.normalize(answer),
-                self.assistant._tts_done,
-                self.assistant._tts_error,
+                lambda: self._on_state_changed("IDLE"),
+                lambda _error: self._on_state_changed("IDLE"),
             )
 
     def failed(self, error: str) -> None:
