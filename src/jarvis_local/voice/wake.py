@@ -38,7 +38,7 @@ class WakeWordDetector:
                 if not Path(model).is_file():
                     import openwakeword
 
-                    known = openwakeword.MODELS.get(model, {})
+                    known = openwakeword.models.get(model, {})
                     model_path = known.get("model_path", "")
                 if not model_path or not Path(model_path).is_file():
                     raise WakeWordError("modelo de wake word ausente; nenhum download automático foi feito")

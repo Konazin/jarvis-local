@@ -286,6 +286,7 @@ class LLMClient:
                     f"{self.config.base_url.rstrip('/')}/chat/completions",
                     json=self._request_payload(messages, registry, requirement, schemas=schemas),
                 )
+                log.debug("llm protocol http_status=%s schemas=%s tool_choice=auto", response.status_code, len(schemas))
                 response.raise_for_status()
                 payload = response.json()
                 self._accumulate_metrics(payload, usage_totals, timing_totals)
@@ -293,6 +294,22 @@ class LLMClient:
                 if not isinstance(message, dict):
                     raise LLMError("resposta do llama-server com message invalida")
                 calls = message.get("tool_calls") or []
+                finish_reason = payload.get("choices", [{}])[0].get("finish_reason")
+                log.debug(
+                    "llm protocol response request=%r finish_reason=%r content_present=%s tool_calls_present=%s "
+                    "tool_names=%s",
+                    text,
+                    finish_reason,
+                    isinstance(message.get("content"), str) and bool(message.get("content")),
+                    bool(message.get("tool_calls")),
+                    [
+                        call.get("function", {}).get("name")
+                        for call in message.get("tool_calls", [])
+                        if isinstance(call, dict) and isinstance(call.get("function"), dict)
+                    ]
+                    if isinstance(message.get("tool_calls"), list)
+                    else [],
+                )
                 if calls and not isinstance(calls, list):
                     raise LLMError("resposta do llama-server com tool_calls invalido")
                 if calls:
@@ -307,7 +324,9 @@ class LLMClient:
                     content = message.get("content")
                     if not isinstance(content, str):
                         raise LLMError("resposta do llama-server sem conteudo")
-                    if self._raw_tool_name(content, registry) is not None:
+                    if self._raw_tool_name(content, registry) is not None or self._textual_tool_sequence(
+                        content, registry
+                    ):
                         if raw_tool_retry_used:
                             raise LLMError("llama-server serializou uma tool call como texto após retry")
                         raw_tool_retry_used = True
@@ -316,6 +335,9 @@ class LLMClient:
                         messages.append({"role": "user", "content": _RAW_TOOL_RETRY_PROMPT})
                         log.info("raw tool-call retry")
                         continue
+                    if self._is_degenerate(content):
+                        log.warning("degeneration_detected")
+                        content = "Não consegui concluir essa solicitação com segurança."
                     self._publish_metrics(started_at, request_count, usage_totals, timing_totals)
                     return content.strip()
                 tool_call_message = dict(message)
@@ -704,6 +726,28 @@ class LLMClient:
             if "arguments" in candidate or candidate.startswith(("{", "<tool_call>")):
                 return name
         return None
+
+    @staticmethod
+    def _textual_tool_sequence(content: str, registry: ToolRegistry) -> bool:
+        parts = [part.strip() for part in re.split(r"[;,|]+", content) if part.strip()]
+        if len(parts) < 2:
+            return False
+        known = set(registry.names()) | {"request_tool_domain"}
+        return sum(part.casefold() in known for part in parts) >= 1 and all(
+            re.fullmatch(r"[A-Za-z0-9_]+", part) for part in parts
+        )
+
+    @staticmethod
+    def _is_degenerate(content: str) -> bool:
+        tokens = re.findall(r"[\wÀ-ÿ]+", content.casefold())
+        if len(tokens) < 12:
+            return False
+        if any(
+            tokens[index] == tokens[index - 1] == tokens[index - 2] == tokens[index - 3]
+            for index in range(3, len(tokens))
+        ):
+            return True
+        return max(tokens.count(token) for token in set(tokens)) / len(tokens) > 0.5
 
     @staticmethod
     def _accumulate_metrics(
